@@ -475,7 +475,7 @@ class Tickets(commands.Cog):
             data[list_key] = current_list
 
         ignore_key = "ignore_roles"; toggle_ignore = kwargs.get("ignore_role")
-        if toggle_ignore
+        if toggle_ignore:
             current_ignore = data.get(ignore_key) or []
             if toggle_ignore.id in current_ignore: current_ignore.remove(toggle_ignore.id); msg.append(f"Ignore: ➖ Remove {toggle_ignore.name}")
             else: current_ignore.append(toggle_ignore.id); msg.append(f"Ignore: ➕ Add {toggle_ignore.name}")
@@ -885,5 +885,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
