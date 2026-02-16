@@ -580,7 +580,7 @@ class Tickets(commands.Cog):
             if last_log and (datetime.datetime.now() - datetime.datetime.fromisoformat(last_log)).total_seconds() < cooldown: return 
         final_content = content
         if not close_thread:
-            aid = t_data.get("assignee_id"); g_conf = self.db.get_guild_config(channel.guild.id); m_list = [f"<@{aid}>"] if aid else []
+            aid = t_data.get("assignee_id"); g_conf = self.db.get_guild_config(channel.guild.id); m_list = []
             r_ids = None
             if aid: p = self.db.get_user_profile(channel.guild.id, aid); r_ids = p.get("mention_roles")
             if not r_ids: r_ids = g_conf.get("mention_roles", [])
