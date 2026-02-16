@@ -159,14 +159,16 @@ class ToDoCreateModal(ui.Modal, title="新規タスク作成"):
 class ToDoView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
 
-    @discord.ui.button(label="Text", style=discord.ButtonStyle.secondary, emoji="📄")
+    # 修正箇所: custom_id を追加
+    @discord.ui.button(label="Text", style=discord.ButtonStyle.secondary, emoji="📄", custom_id="todo_text_btn")
     async def show_text(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("ToDo")
         task = cog.get_task(itx.guild_id, itx.message.id)
         content = task.get("description") if task else (itx.message.embeds[0].description if itx.message.embeds else "No Content")
         await itx.response.send_message(content or "No Content", ephemeral=True)
 
-    @discord.ui.button(label="Resolve", style=discord.ButtonStyle.success)
+    # 修正箇所: custom_id を追加
+    @discord.ui.button(label="Resolve", style=discord.ButtonStyle.success, custom_id="todo_resolve_btn")
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("ToDo"); task = cog.get_task(itx.guild_id, itx.message.id)
         if task and task.get("status") == "completed": await itx.response.send_message("既に完了済みです", ephemeral=True); return
@@ -178,7 +180,8 @@ class ToDoView(discord.ui.View):
         self.remove_item(button); await itx.message.edit(embed=embed, view=self)
         await itx.response.send_message("👍 Resolved!", ephemeral=True)
 
-    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger)
+    # 修正箇所: custom_id を追加
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, custom_id="todo_delete_btn")
     async def delete(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("ToDo"); cog.delete_task_data(itx.guild_id, itx.message.id)
         await itx.message.delete(); await itx.response.send_message("🗑️ Deleted", ephemeral=True)
