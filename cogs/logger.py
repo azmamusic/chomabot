@@ -1,36 +1,24 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
 import os
 import logging
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
+from utils.storage import JsonHandler
 
-# Logger setup
 logger = logging.getLogger("discord_bot.cogs.logger")
 DATA_FILE = os.path.join("data", "log_settings.json")
 
 class Logger(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.settings = self.load_settings()
+        self.db = JsonHandler(DATA_FILE)
+        self.settings = self.db.load()
         self.channel_cooldowns: Dict[int, float] = {}
 
-    def load_settings(self) -> Dict[str, Any]:
-        if not os.path.exists(DATA_FILE): return {}
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load log settings: {e}")
-            return {}
-
     def save_settings(self):
-        try:
-            os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-            with open(DATA_FILE, "w", encoding="utf-8") as f: json.dump(self.settings, f, indent=4)
-        except Exception as e:
-            logger.error(f"Failed to save log settings: {e}")
+        self.db.save(self.settings)
 
     def get_guild_settings(self, guild_id: int) -> Dict[str, Any]:
         gid = str(guild_id)
@@ -45,16 +33,13 @@ class Logger(commands.Cog):
         for key, value in defaults.items():
             if key not in guild_settings: guild_settings[key] = value
         
-        # Migration logic (Old setup -> New list)
+        # Migration logic
         if "reception_role_id" in guild_settings:
             if guild_settings["reception_role_id"]:
                 guild_settings["reception_role_ids"] = [guild_settings["reception_role_id"]]
             del guild_settings["reception_role_id"]
             self.save_settings()
 
-        # Cleanup
-        for key in ["log_channel_id", "watch", "mode", "whitelist"]:
-            if key in guild_settings: del guild_settings[key]; self.save_settings()
         return guild_settings
 
     # --- Logic ---
@@ -110,8 +95,12 @@ class Logger(commands.Cog):
             now = time.time()
             if now - last_time < cd_sec: return
 
-        # Build Embed
-        embed = discord.Embed(description=message.content or "[(内容なし)]", color=discord.Color.light_grey(), timestamp=message.created_at)
+        # Build Embed with content truncation
+        content = message.content or "[(内容なし)]"
+        if len(content) > 3000:
+            content = content[:3000] + "...\n(長すぎるため省略)"
+
+        embed = discord.Embed(description=content, color=discord.Color.light_grey(), timestamp=message.created_at)
         embed.set_author(name=message.author.display_name, icon_url=message.author.display_avatar.url)
         embed.add_field(name="チャンネル", value=message.channel.mention, inline=True)
         embed.add_field(name="リンク", value=f"[ジャンプ]({message.jump_url})", inline=True)
@@ -123,10 +112,10 @@ class Logger(commands.Cog):
             embed.add_field(name="返信先", value=f"{ref.author.display_name}: {ref.content[:50]}...", inline=False)
 
         role_ids = settings.get("reception_role_ids", [])
-        content = " ".join([f"<@&{rid}>" for rid in role_ids]) if role_ids else None
+        mention_content = " ".join([f"<@&{rid}>" for rid in role_ids]) if role_ids else None
 
         try:
-            await dest_channel.send(content=content, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
+            await dest_channel.send(content=mention_content, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
             if cd_sec > 0: self.channel_cooldowns[message.channel.id] = time.time()
         except Exception as e:
             logger.error(f"Failed to send log: {e}")
@@ -134,11 +123,7 @@ class Logger(commands.Cog):
     # ====================================================
     # Commands Structure
     # ====================================================
-    
-    # Root Group
     log_group = app_commands.Group(name="logger", description="ログ設定")
-
-    # 1. Route Group (監視・転送設定)
     route_group = app_commands.Group(name="route", description="監視対象と出力先の設定", parent=log_group)
 
     @route_group.command(name="add", description="監視対象を追加")
@@ -165,7 +150,6 @@ class Logger(commands.Cog):
         self.save_settings()
         await itx.response.send_message("\n".join(msg) or "設定が見つかりませんでした。", ephemeral=True)
 
-    # 2. Ignore Group (除外設定)
     ignore_group = app_commands.Group(name="ignore", description="ログ監視から除外する設定", parent=log_group)
 
     @ignore_group.command(name="add", description="指定した対象を無視")
@@ -186,7 +170,6 @@ class Logger(commands.Cog):
         self.save_settings()
         await itx.response.send_message("\n".join(msg) or "設定が見つかりませんでした。", ephemeral=True)
 
-    # 3. Notify Group (旧 Setup - 通知先設定)
     notify_group = app_commands.Group(name="notify", description="ログ発生時のメンション先設定", parent=log_group)
 
     @notify_group.command(name="add", description="メンションロールを追加")
@@ -219,7 +202,6 @@ class Logger(commands.Cog):
             role = itx.guild.get_role(rid); mentions.append(role.mention if role else f"(削除済: {rid})")
         await itx.response.send_message(f"📢 **通知先ロール一覧:**\n" + "\n".join(mentions), ephemeral=True)
 
-    # 4. Config Group (システム設定 & ステータス)
     config_group = app_commands.Group(name="config", description="システム設定・状況確認", parent=log_group)
 
     @config_group.command(name="cooldown", description="連続通知の待機時間を設定 (0で無効)")
@@ -237,17 +219,14 @@ class Logger(commands.Cog):
         ignore = settings["ignore"]; routes = settings["routes"]
         embed = discord.Embed(title="📋 ログ設定状況", color=discord.Color.blue())
         
-        # System
         cd_sec = settings.get("cooldown_seconds", 0)
         embed.add_field(name="⚙️ Config", value=f"Cooldown: **{cd_sec}秒**", inline=False)
         
-        # Notify
         setup_list = []
         for rid in settings.get("reception_role_ids", []):
             r = itx.guild.get_role(rid); setup_list.append(r.mention if r else str(rid))
         embed.add_field(name="📢 Notify (通知先)", value=", ".join(setup_list) or "なし", inline=False)
 
-        # Route
         r_list = []
         for src, dest in routes["categories"].items():
             s = itx.guild.get_channel(int(src)); d = itx.guild.get_channel(int(dest))
@@ -257,7 +236,6 @@ class Logger(commands.Cog):
             r_list.append(f"#️⃣ {s.mention if s else src} -> {d.mention if d else dest}")
         embed.add_field(name="👁️ Route (監視)", value="\n".join(r_list) or "なし", inline=False)
 
-        # Ignore
         i_list = []
         for rid in ignore["roles"]: r = itx.guild.get_role(rid); i_list.append(f"👤 {r.mention if r else rid}")
         for cid in ignore["categories"]: c = itx.guild.get_channel(cid); i_list.append(f"📂 {c.name if c else cid}")
