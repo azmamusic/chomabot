@@ -1,28 +1,30 @@
 import json
 import os
+import logging
+from typing import Any, Dict
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+logger = logging.getLogger("utils.storage")
 
-FILES = {
-    "active_sources": "active_sources.json",
-    "todo": "todo_data.json",
-    "ignore_roles": "ignore_roles.json",
-    "log_routes": "log_routes.json",
-    "work_tasks": "work_tasks.json"
-}
+class JsonHandler:
+    def __init__(self, filepath: str):
+        self.filepath = filepath
 
-def _path(name):
-    return os.path.join(DATA_DIR, FILES[name])
+    def load(self, default: Dict[str, Any] = None) -> Dict[str, Any]:
+        if default is None:
+            default = {}
+        if not os.path.exists(self.filepath):
+            return default
+        try:
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load JSON ({self.filepath}): {e}")
+            return default
 
-def load_json(name, default):
-    try:
-        with open(_path(name), "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return default
-
-def save_json(name, data):
-    with open(_path(name), "w") as f:
-        json.dump(data, f)
-
+    def save(self, data: Dict[str, Any]):
+        try:
+            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to save JSON ({self.filepath}): {e}")
