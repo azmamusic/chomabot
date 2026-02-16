@@ -62,8 +62,8 @@ class TicketDataManager:
         defaults = {
             "assignee_role_id": None, "assignee_qual_role_id": None,
             "profiles": {}, "attributes": {}, "category_id": None, "name_format": None,
-            "mention_roles": [], "log_mention_role_ids": [], "ignore_role_ids": [], "template": None, "transcript_id": None,
-            "log_cooldown": DEFAULT_LOG_COOLDOWN, "reuse_channel": DEFAULT_REUSE_CHANNEL,
+            "mention_roles": [], "log_roles": [], "ignore_roles": [], "template": None, "transcript_id": None,
+            "cooldown": DEFAULT_LOG_COOLDOWN, "reuse_channel": DEFAULT_REUSE_CHANNEL,
             "max_slots": DEFAULT_MAX_SLOTS, "notify_enabled": DEFAULT_NOTIFY_ENABLED,
             "timeout_hours": DEFAULT_TIMEOUT_HOURS, "auto_close_days": DEFAULT_AUTO_CLOSE_DAYS,
             "auto_close_enabled": DEFAULT_AUTO_CLOSE_ENABLED
@@ -81,10 +81,10 @@ class TicketDataManager:
         p = g["profiles"][uid]
         defaults = {
             "category_id": None, "template": None, "name_format": None,
-            "mention_roles": None, "log_mention_role_ids": None, "ignore_role_ids": None, "blacklist": [], "attributes": {},
+            "mention_roles": None, "log_roles": None, "ignore_roles": None, "blacklist": [], "attributes": {},
             "reuse_channel": None, "max_slots": None, "notify_enabled": None,
             "timeout_hours": None, "auto_close_enabled": None, "auto_close_days": None,
-            "transcript_id": None, "log_cooldown": None
+            "transcript_id": None, "cooldown": None
         }
         for k, v in defaults.items():
             if k not in p:
@@ -593,7 +593,7 @@ class Tickets(commands.Cog):
     def _update_settings_logic(self, data: dict, is_guild: bool, **kwargs):
         msg = []
         for arg, val in kwargs.items():
-            if val is None or arg in ["mention_role", "reset_roles", "ignore_role", "log_mention_role"]:
+            if val is None or arg in ["mention_role", "reset_roles", "ignore_role", "log_role"]:
                 continue
             db_key, store_val, display_val = arg, val, val
             if hasattr(val, "id"):
@@ -620,7 +620,7 @@ class Tickets(commands.Cog):
                 msg.append(f"Mentions: ➕ Add {toggle_role.name}")
             data[list_key] = current_list
 
-        ignore_key = "ignore_role_ids"
+        ignore_key = "ignore_roles"
         toggle_ignore = kwargs.get("ignore_role")
         if toggle_ignore:
             current_ignore = data.get(ignore_key) or []
@@ -632,8 +632,8 @@ class Tickets(commands.Cog):
                 msg.append(f"Ignore: ➕ Add {toggle_ignore.name}")
             data[ignore_key] = current_ignore
 
-        log_key = "log_mention_role_ids"
-        toggle_log = kwargs.get("log_mention_role")
+        log_key = "log_roles"
+        toggle_log = kwargs.get("log_role")
         if toggle_log:
             current_log = data.get(log_key) or []
             if toggle_log.id in current_log:
@@ -791,7 +791,7 @@ class Tickets(commands.Cog):
         if not attachments and not is_update and not close_thread and not view:
             last_log, assignee_id = t_data.get("last_log_at"), t_data.get("assignee_id")
             prof = self.db.get_user_profile(channel.guild.id, assignee_id) if assignee_id else {}
-            cooldown = self._get_setting(channel.guild.id, prof, "log_cooldown", DEFAULT_LOG_COOLDOWN)
+            cooldown = self._get_setting(channel.guild.id, prof, "cooldown", DEFAULT_LOG_COOLDOWN)
             if last_log and (datetime.datetime.now() - datetime.datetime.fromisoformat(last_log)).total_seconds() < cooldown:
                 return 
         final_content = content
@@ -805,11 +805,11 @@ class Tickets(commands.Cog):
             if aid:
                 p = self.db.get_user_profile(channel.guild.id, aid)
                 base_rids = p.get("mention_roles")
-                log_rids = p.get("log_mention_role_ids")
+                log_rids = p.get("log_roles")
             if not base_rids:
                 base_rids = g_conf.get("mention_roles", [])
             if not log_rids:
-                log_rids = g_conf.get("log_mention_role_ids", [])
+                log_rids = g_conf.get("log_roles", [])
             
             all_rids = list(set((base_rids or []) + (log_rids or [])))
 
@@ -879,13 +879,13 @@ class Tickets(commands.Cog):
             self.db.save_timers()
             
             g_conf = self.db.get_guild_config(message.guild.id)
-            ignore_rids = g_conf.get("ignore_role_ids", []) or []
+            ignore_rids = g_conf.get("ignore_roles", []) or []
 
             t_data = self.db.timers.get(gid, {}).get(cid, {})
             aid = t_data.get("assignee_id")
             if aid:
                 p = self.db.get_user_profile(message.guild.id, aid)
-                p_ignore = p.get("ignore_role_ids")
+                p_ignore = p.get("ignore_roles")
                 if p_ignore:
                     ignore_rids = list(set(ignore_rids + p_ignore))
 
@@ -953,9 +953,9 @@ class Tickets(commands.Cog):
         if not m_roles:
             m_roles = g.get("mention_roles", [])
         m_str = ", ".join([guild.get_role(r).name for r in m_roles if guild.get_role(r)]) or "なし"
-        l_roles = p.get("log_mention_role_ids")
+        l_roles = p.get("log_roles")
         if not l_roles:
-            l_roles = g.get("log_mention_role_ids", [])
+            l_roles = g.get("log_roles", [])
         l_str = ", ".join([guild.get_role(r).name for r in l_roles if guild.get_role(r)]) or "なし"
         embed.add_field(name="Mentions", value=f"Ticket: {m_str}\nLog+: {l_str}", inline=False)
         return embed
@@ -972,15 +972,15 @@ class Tickets(commands.Cog):
         embed.add_field(name="🔑 Roles", value=f"Assignee: {r_name(g.get('assignee_role_id'))}\nQual: {r_name(g.get('assignee_qual_role_id'))}", inline=True)
         lfid = g.get("transcript_id")
         lf = guild.get_channel(lfid) if lfid else None
-        embed.add_field(name="📜 Logs", value=f"Channel: {lf.mention if lf else '❌ 未設定'}\nCooldown: {g.get('log_cooldown')}s", inline=True)
+        embed.add_field(name="📜 Logs", value=f"Channel: {lf.mention if lf else '❌ 未設定'}\nCooldown: {g.get('cooldown')}s", inline=True)
         embed.add_field(name="⚙️ Behaviors", value=f"Reuse Channel: {on_off(g.get('reuse_channel'))}\nNotify Enabled: {on_off(g.get('notify_enabled'))}\nFormat: `{g.get('name_format', 'Default')}`", inline=False)
         ac_days = f"{g.get('auto_close_days')}d" if g.get("auto_close_enabled") else "❌ Disabled"
         embed.add_field(name="⏱️ Timers & Limits", value=f"Timeout: {g.get('timeout_hours')}h\nAuto Close: {ac_days}\nMax Slots/User: {g.get('max_slots')}", inline=False)
         m_roles = g.get("mention_roles", [])
         m_str = ", ".join([guild.get_role(r).mention for r in m_roles if guild.get_role(r)]) or "なし"
-        l_roles = g.get("log_mention_role_ids", [])
+        l_roles = g.get("log_roles", [])
         l_str = ", ".join([guild.get_role(r).mention for r in l_roles if guild.get_role(r)]) or "なし"
-        i_roles = g.get("ignore_role_ids", [])
+        i_roles = g.get("ignore_roles", [])
         i_str = ", ".join([guild.get_role(r).mention for r in i_roles if guild.get_role(r)]) or "なし"
         attr_list = list(g.get("attributes", {}).keys())
         attr_str = ", ".join(attr_list) if attr_list else "なし"
@@ -1046,15 +1046,15 @@ class Tickets(commands.Cog):
         m_label = "(Custom)" if pm is not None else "(Default)"
         embed.add_field(name=f"🔔 Mentions {m_label}", value=m_str, inline=False)
 
-        pl = p.get("log_mention_role_ids")
-        gl = g.get("log_mention_role_ids", [])
+        pl = p.get("log_roles")
+        gl = g.get("log_roles", [])
         l_list = pl if pl is not None else gl
         l_str = ", ".join([guild.get_role(r).mention for r in l_list if guild.get_role(r)]) or "なし"
         l_label = "(Custom)" if pl is not None else "(Default)"
         embed.add_field(name=f"📢 Log Extra {l_label}", value=l_str, inline=False)
         
-        pi = p.get("ignore_role_ids")
-        gi = g.get("ignore_role_ids", [])
+        pi = p.get("ignore_roles")
+        gi = g.get("ignore_roles", [])
         i_list = pi if pi is not None else gi
         i_str = ", ".join([guild.get_role(r).mention for r in i_list if guild.get_role(r)]) or "なし"
         i_label = "(Custom)" if pi is not None else "(Default)"
@@ -1089,9 +1089,9 @@ class Tickets(commands.Cog):
     attr_group = app_commands.Group(name="attribute", description="属性管理", parent=ticket_group)
 
     @admin_group.command(name="setup", description="サーバー設定の変更")
-    async def admin_setup(self, itx: discord.Interaction, assignee_role: Optional[discord.Role] = None, assignee_qual_role: Optional[discord.Role] = None, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, log_cooldown: Optional[int] = None, mention_role: Optional[discord.Role] = None, log_mention_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
+    async def admin_setup(self, itx: discord.Interaction, assignee_role: Optional[discord.Role] = None, assignee_qual_role: Optional[discord.Role] = None, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, cooldown: Optional[int] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
         g = self.db.get_guild_config(itx.guild_id)
-        msg = self._update_settings_logic(g, is_guild=True, assignee_role=assignee_role, assignee_qual_role=assignee_qual_role, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, notify_enabled=notify_enabled, name_format=name_format, log_cooldown=log_cooldown, mention_role=mention_role, log_mention_role=log_mention_role, ignore_role=ignore_role, reset_roles=reset_roles)
+        msg = self._update_settings_logic(g, is_guild=True, assignee_role=assignee_role, assignee_qual_role=assignee_qual_role, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, notify_enabled=notify_enabled, name_format=name_format, cooldown=cooldown, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"⚙️ 更新:\n" + "\n".join(msg) or "変更なし", ephemeral=True)
 
@@ -1173,9 +1173,9 @@ class Tickets(commands.Cog):
         await itx.followup.send(f"🚀 復旧完了 ({recovered}件)\n" + "\n".join(log[:10]), ephemeral=True)
 
     @my_group.command(name="setup", description="個人設定")
-    async def my_setup(self, itx: discord.Interaction, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, log_cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_mention_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
+    async def my_setup(self, itx: discord.Interaction, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
         p = self.db.get_user_profile(itx.guild_id, itx.user.id)
-        msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, log_cooldown=log_cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_mention_role=log_mention_role, ignore_role=ignore_role, reset_roles=reset_roles)
+        msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"👤 更新完了", ephemeral=True)
 
@@ -1186,9 +1186,9 @@ class Tickets(commands.Cog):
 
     @ticket_group.command(name="override", description="【管理者】ユーザー強制変更")
     @app_commands.checks.has_permissions(manage_roles=True)
-    async def override_cmd(self, itx: discord.Interaction, target: discord.Member, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, log_cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_mention_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
+    async def override_cmd(self, itx: discord.Interaction, target: discord.Member, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
         p = self.db.get_user_profile(itx.guild_id, target.id)
-        msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, log_cooldown=log_cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_mention_role=log_mention_role, ignore_role=ignore_role, reset_roles=reset_roles)
+        msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"🔧 変更完了", ephemeral=True)
 
@@ -1223,3 +1223,4 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
