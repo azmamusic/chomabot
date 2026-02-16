@@ -1,13 +1,14 @@
 import discord
 from discord import app_commands, ui
 from discord.ext import commands, tasks
-import json
 import os
 import logging
 import datetime
 import asyncio
 import re
 from typing import Dict, Any, Optional, List, Union
+from utils.storage import JsonHandler
+from utils.persistent_views import persistent_view
 
 logger = logging.getLogger("discord_bot.cogs.tickets")
 
@@ -23,25 +24,32 @@ DEFAULT_AUTO_CLOSE_ENABLED = True
 DEFAULT_LOG_COOLDOWN = 300
 
 # ====================================================
-# Data Management
+# Data Management (Refactored for Performance)
 # ====================================================
 class TicketDataManager:
     def __init__(self):
-        self.profiles = self._load_json(DATA_FILE)
-        self.timers = self._load_json(TIMER_DATA_FILE)
+        self.profiles_handler = JsonHandler(DATA_FILE)
+        self.timers_handler = JsonHandler(TIMER_DATA_FILE)
+        
+        self.profiles = self.profiles_handler.load()
+        self.timers = self.timers_handler.load()
+        
+        self._profiles_dirty = False
+        self._timers_dirty = False
 
-    def _load_json(self, path) -> Dict[str, Any]:
-        if not os.path.exists(path): return {}
-        try:
-            with open(path, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+    def save_profiles(self):
+        self._profiles_dirty = True
 
-    def save_profiles(self): self._save_json(DATA_FILE, self.profiles)
-    def save_timers(self): self._save_json(TIMER_DATA_FILE, self.timers)
-
-    def _save_json(self, path, data):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+    def save_timers(self):
+        self._timers_dirty = True
+        
+    def flush(self):
+        if self._profiles_dirty:
+            self.profiles_handler.save(self.profiles)
+            self._profiles_dirty = False
+        if self._timers_dirty:
+            self.timers_handler.save(self.timers)
+            self._timers_dirty = False
 
     def get_guild_config(self, guild_id: int) -> Dict[str, Any]:
         gid = str(guild_id)
@@ -81,6 +89,7 @@ class TicketDataManager:
 # ====================================================
 # UI Classes
 # ====================================================
+@persistent_view
 class TicketPanelView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="依頼を作成する", style=discord.ButtonStyle.success, emoji="📝", custom_id="panel_create_btn")
@@ -169,6 +178,7 @@ class TechModal(discord.ui.Modal, title="依頼内容 (2/2: 技術情報)"):
         if cog: await cog.log_to_forum(itx.channel, embed=embed, is_update=True)
         await itx.response.send_message("✅ 詳細を保存しました！", ephemeral=False)
 
+@persistent_view
 class TicketControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="🎵 詳細入力", style=discord.ButtonStyle.primary, custom_id="btn_tech")
@@ -199,7 +209,8 @@ class CloseChoiceView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
-        cog = itx.client.get_cog("Tickets"); await cog.close_ticket(itx.channel, itx.user)
+        cog = itx.client.get_cog("Tickets")
+        await cog.close_ticket(itx.channel, itx.user)
         await itx.response.send_message("✅ 完了しました。", ephemeral=True)
     @discord.ui.button(label="チャンネル削除", style=discord.ButtonStyle.danger)
     async def delete_ch(self, itx: discord.Interaction, button: discord.ui.Button):
@@ -210,7 +221,8 @@ class MyDashboardView(discord.ui.View):
     def __init__(self): super().__init__(timeout=180)
     @discord.ui.button(label="受付切替 (Toggle)", style=discord.ButtonStyle.primary, custom_id="my_dash_toggle")
     async def toggle(self, itx: discord.Interaction, button: discord.ui.Button):
-        cog = itx.client.get_cog("Tickets"); await cog.toggle_reception(itx)
+        cog = itx.client.get_cog("Tickets")
+        await cog.toggle_reception(itx)
         new_member = await itx.guild.fetch_member(itx.user.id)
         embed = await cog.create_my_dashboard_embed(itx.guild, new_member)
         await itx.response.edit_message(embed=embed, view=self)
@@ -289,35 +301,49 @@ class GlobalTemplateModal(discord.ui.Modal, title="共通テンプレート編�
     async def on_submit(self, itx): 
         cog = itx.client.get_cog("Tickets"); g = cog.db.get_guild_config(itx.guild_id); g["template"] = cog.resolve_mentions(itx.guild, self.c.value); cog.db.save_profiles(); await itx.response.send_message("更新しました", ephemeral=True)
 
+@persistent_view
 class AutoCloseConfirmView(discord.ui.View):
-    def __init__(self, gid: str = None, cid: str = None): 
-        super().__init__(timeout=None)
-        self.gid = gid; self.cid = cid
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="🗑️ 削除する", style=discord.ButtonStyle.danger, custom_id="ac_del")
-    async def delete(self, itx, btn): 
-        if not self.cid: await itx.response.send_message("エラー: コンテキストが失われました。手動で削除してください。", ephemeral=True); return
-        cog = itx.client.get_cog("Tickets"); ch = itx.guild.get_channel(int(self.cid))
-        if ch: await cog.log_to_forum(ch, content="🗑️ 自動削除を実行しました。", close_thread=True); await ch.delete()
+    async def delete(self, itx: discord.Interaction, btn: discord.ui.Button):
+        cid = str(itx.channel.id)
+        gid = str(itx.guild_id)
+        cog = itx.client.get_cog("Tickets")
+        ch = itx.guild.get_channel(int(cid))
+        if ch: 
+            await cog.log_to_forum(ch, content="🗑️ 自動削除を実行しました。", close_thread=True)
+            await ch.delete()
         else:
-            if self.cid in cog.db.timers.get(self.gid, {}): del cog.db.timers[self.gid][self.cid]; cog.db.save_timers()
+            if cid in cog.db.timers.get(gid, {}): 
+                del cog.db.timers[gid][cid]
+                cog.db.save_timers()
+
     @discord.ui.button(label="延長 (まだ使う)", style=discord.ButtonStyle.success, custom_id="ac_ext")
-    async def extend(self, itx, btn): 
-        if not self.cid: await itx.response.send_message("エラー: コンテキストが失われました。", ephemeral=True); return
+    async def extend(self, itx: discord.Interaction, btn: discord.ui.Button): 
+        cid = str(itx.channel.id)
+        gid = str(itx.guild_id)
         cog = itx.client.get_cog("Tickets")
-        if self.cid in cog.db.timers.get(self.gid, {}): cog.db.timers[self.gid][self.cid].update({"last_message_at": datetime.datetime.now().isoformat(), "close_confirming": False}); cog.db.save_timers()
-        await itx.message.delete(); await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
+        if cid in cog.db.timers.get(gid, {}): 
+            cog.db.timers[gid][cid].update({"last_message_at": datetime.datetime.now().isoformat(), "close_confirming": False})
+            cog.db.save_timers()
+        await itx.message.delete()
+        await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
 
+@persistent_view
 class ReminderView(discord.ui.View):
-    def __init__(self, gid: str = None, cid: str = None): 
-        super().__init__(timeout=None)
-        self.gid = gid; self.cid = cid
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="確認 (タイマー延長)", style=discord.ButtonStyle.primary, custom_id="rem_ext")
-    async def extend(self, itx, btn):
-        if not self.cid: await itx.response.send_message("エラー: コンテキストが失われました。", ephemeral=True); return
+    async def extend(self, itx: discord.Interaction, btn: discord.ui.Button):
+        cid = str(itx.channel.id)
+        gid = str(itx.guild_id)
         cog = itx.client.get_cog("Tickets")
-        if self.cid in cog.db.timers.get(self.gid, {}): cog.db.timers[self.gid][self.cid].update({"last_message_at": datetime.datetime.now().isoformat(), "reminded": False}); cog.db.save_timers()
-        await itx.message.delete(); await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
+        if cid in cog.db.timers.get(gid, {}): 
+            cog.db.timers[gid][cid].update({"last_message_at": datetime.datetime.now().isoformat(), "reminded": False})
+            cog.db.save_timers()
+        await itx.message.delete()
+        await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
 
+@persistent_view
 class ReopenView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="🔄 再開", style=discord.ButtonStyle.primary, custom_id="reopen_ticket")
@@ -335,8 +361,19 @@ class ReopenView(discord.ui.View):
 # ====================================================
 class Tickets(commands.Cog):
     def __init__(self, bot: commands.Bot):
-        self.bot = bot; self.db = TicketDataManager(); self.check_inactivity_loop.start()
-    def cog_unload(self): self.check_inactivity_loop.cancel()
+        self.bot = bot
+        self.db = TicketDataManager()
+        self.check_inactivity_loop.start()
+        self.autosave_loop.start()
+
+    def cog_unload(self):
+        self.check_inactivity_loop.cancel()
+        self.autosave_loop.cancel()
+        self.db.flush()
+
+    @tasks.loop(seconds=60)
+    async def autosave_loop(self):
+        self.db.flush()
 
     def resolve_mentions(self, guild: discord.Guild, text: str) -> Optional[str]:
         if not text: return None
@@ -558,6 +595,39 @@ class Tickets(commands.Cog):
             if close_thread: await thread.edit(archived=True, locked=True)
         except Exception as e: logger.error(f"Log Error: {e}")
 
+    async def close_ticket(self, channel, user):
+        gid, cid = str(channel.guild.id), str(channel.id)
+        if cid not in self.db.timers.get(gid, {}): return
+        active_tickets = self.db.timers[gid][cid].get("active_tickets", [])
+        for msg_id in active_tickets:
+            try:
+                msg = await channel.fetch_message(msg_id)
+                if msg and msg.embeds:
+                    embed = msg.embeds[0]
+                    embed.title = f"✅ [完了] {embed.title}"
+                    embed.color = discord.Color.grey()
+                    await msg.edit(embed=embed, view=ReopenView())
+            except: pass
+        self.db.timers[gid][cid]["active_tickets"] = []
+        self.db.save_timers()
+        await self.log_to_forum(channel, content=f"✅ **{user.display_name} によって完了とマークされました**", close_thread=True)
+
+    async def toggle_reception(self, interaction: discord.Interaction):
+        g_conf = self.db.get_guild_config(interaction.guild_id)
+        role_id = g_conf.get("assignee_role_id")
+        if not role_id:
+            await interaction.response.send_message("設定エラー: Assignee Role が設定されていません。", ephemeral=True); return
+        role = interaction.guild.get_role(role_id)
+        if not role:
+            await interaction.response.send_message("設定エラー: ロールが見つかりません。", ephemeral=True); return
+        user = interaction.user
+        if role in user.roles:
+            await user.remove_roles(role)
+            await interaction.response.send_message("💤 受付を停止しました。", ephemeral=True)
+        else:
+            await user.add_roles(role)
+            await interaction.response.send_message("🟢 受付を開始しました。", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
@@ -582,7 +652,7 @@ class Tickets(commands.Cog):
                 if info.get("auto_close_enabled", True) and not info.get("close_confirming", False):
                     limit_days = info.get("auto_close_days", DEFAULT_AUTO_CLOSE_DAYS)
                     if delta > datetime.timedelta(days=limit_days):
-                        view = AutoCloseConfirmView(gid, cid)
+                        view = AutoCloseConfirmView()
                         embed = discord.Embed(title="⚠️ 自動削除の確認", description=f"このチケットは {limit_days}日間 動きがありません。\n削除してもよろしいですか？", color=discord.Color.red())
                         embed.add_field(name="対象チャンネル", value=f"<#{cid}>")
                         await self.log_to_forum(ch, embed=embed, view=view)
@@ -590,7 +660,7 @@ class Tickets(commands.Cog):
                 if not info.get("reminded", False):
                     limit_hours = info.get("timeout_hours", DEFAULT_TIMEOUT_HOURS)
                     if delta > datetime.timedelta(hours=limit_hours):
-                        view = ReminderView(gid, cid)
+                        view = ReminderView()
                         embed = discord.Embed(title="⏰ 未稼働通知", description=f"最後のメッセージから {limit_hours}時間 が経過しました。\n進行状況を確認してください。", color=discord.Color.orange())
                         embed.add_field(name="対象チャンネル", value=f"<#{cid}>")
                         await self.log_to_forum(ch, embed=embed, view=view)
@@ -621,14 +691,12 @@ class Tickets(commands.Cog):
         m_roles = g.get("mention_roles", []); m_str = ", ".join([guild.get_role(r).mention for r in m_roles if guild.get_role(r)]) or "なし"
         attr_list = list(g.get("attributes", {}).keys()); attr_str = ", ".join(attr_list) if attr_list else "なし"
         embed.add_field(name="🔔 Default Mentions", value=m_str, inline=True); embed.add_field(name="🏷️ Attributes", value=attr_str, inline=True)
-
         a_rid = g.get("assignee_role_id"); q_rid = g.get("assignee_qual_role_id")
         a_role = guild.get_role(a_rid) if a_rid else None; q_role = guild.get_role(q_rid) if q_rid else None
         target_members = set()
         if a_role: target_members.update(a_role.members)
         if q_role: target_members.update(q_role.members)
         target_members = [m for m in target_members if not m.bot]
-
         if target_members:
             accepting_count = len([m for m in target_members if a_role and a_role in m.roles])
             total_count = len(target_members)
@@ -719,6 +787,7 @@ class Tickets(commands.Cog):
     @admin_group.command(name="recover", description="スキャン復旧")
     async def admin_recover(self, itx: discord.Interaction, category: discord.CategoryChannel, dry_run: bool = False):
         await itx.response.defer(ephemeral=True); gid = str(itx.guild_id); g = self.db.get_guild_config(itx.guild_id); rid = g.get("assignee_role_id"); recovered = 0
+        log = []
         if not rid: await itx.followup.send("⚠️ 担当ロール未設定", ephemeral=True); return
         for ch in category.text_channels:
             cid = str(ch.id)
@@ -771,7 +840,4 @@ class Tickets(commands.Cog):
         else: await itx.response.send_modal(ContractModal(assignee))
 
 async def setup(bot: commands.Bot):
-    # Removed AutoCloseConfirmView and ReminderView from persistence because they are stateful (require cid)
-    persistent_views = [TicketPanelView, TicketControlView, ReopenView]; 
-    for V in persistent_views: bot.add_view(V())
     await bot.add_cog(Tickets(bot))
