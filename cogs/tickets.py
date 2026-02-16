@@ -763,7 +763,7 @@ class Tickets(commands.Cog):
 
         if not thread:
             try:
-                t_w_msg = await forum.create_thread(name=channel.name, content="🆕 **New Ticket Log Created**", embed=embed)
+                t_w_msg = await forum.create_thread(name=channel.name, content=f"🆕 **New Ticket Log Created** (Source: {channel.mention})", embed=embed)
                 thread = t_w_msg.thread
                 self.db.timers[gid][cid]["mirror_thread_id"] = thread.id
                 self.db.save_timers()
@@ -1229,6 +1229,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
