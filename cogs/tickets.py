@@ -1097,7 +1097,7 @@ class Tickets(commands.Cog):
         embed = await self.create_admin_dashboard_embed(itx.guild)
         await itx.followup.send(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
 
-@admin_group.command(name="dashboard", description="サーバー設定確認")
+    @admin_group.command(name="dashboard", description="サーバー設定確認")
     async def admin_dash(self, itx: discord.Interaction):
         embed = await self.create_admin_dashboard_embed(itx.guild)
         await itx.response.send_message(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
@@ -1229,5 +1229,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
