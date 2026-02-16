@@ -1094,8 +1094,10 @@ class Tickets(commands.Cog):
         msg = self._update_settings_logic(g, is_guild=True, assignee_role=assignee_role, assignee_qual_role=assignee_qual_role, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, notify_enabled=notify_enabled, name_format=name_format, cooldown=cooldown, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"⚙️ 更新:\n" + "\n".join(msg) or "変更なし", ephemeral=True)
+        embed = await self.create_admin_dashboard_embed(itx.guild)
+        await itx.followup.send(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
 
-    @admin_group.command(name="dashboard", description="サーバー設定確認")
+@admin_group.command(name="dashboard", description="サーバー設定確認")
     async def admin_dash(self, itx: discord.Interaction):
         embed = await self.create_admin_dashboard_embed(itx.guild)
         await itx.response.send_message(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
@@ -1178,6 +1180,8 @@ class Tickets(commands.Cog):
         msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"👤 更新完了", ephemeral=True)
+        embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
+        await itx.followup.send(embed=embed, view=MyDashboardView(), ephemeral=True)
 
     @my_group.command(name="dashboard", description="個人ダッシュボード")
     async def my_dash(self, itx: discord.Interaction):
@@ -1191,6 +1195,8 @@ class Tickets(commands.Cog):
         msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.send_message(f"🔧 変更完了", ephemeral=True)
+        embed = await self.create_assignee_detail_embed(itx.guild, target.id, target.display_name)
+        await itx.followup.send(embed=embed, view=AdminStaffDetailView(self, itx.guild), ephemeral=True)
 
     @attr_group.command(name="set", description="属性設定")
     async def attr_set(self, itx: discord.Interaction, user: discord.Member, key: str, value: int):
@@ -1223,4 +1229,5 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
