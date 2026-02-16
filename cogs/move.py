@@ -21,30 +21,18 @@ class Move(commands.Cog):
         return None
 
     async def _resolve_channel(self, guild, input_val: Union[discord.abc.GuildChannel, discord.Thread, str, None]):
-        """
-        ID指定のみを受け付ける厳格な解決ロジック。
-        名前検索は行わない。
-        """
         if input_val is None: return None
-        
-        # 既にオブジェクトになっている場合 (青いチップ)
         if isinstance(input_val, (discord.abc.GuildChannel, discord.Thread)):
             return input_val
-        
-        # 文字列の正規化 (クォート除去)
         text = str(input_val).strip().replace('"', '').replace("'", "")
-        
-        # ID解析
         target_id = None
         if text.isdigit():
             target_id = int(text)
         elif text.startswith("<#") and text.endswith(">"):
             try: target_id = int(text[2:-1])
             except: pass
-            
         if target_id:
             return guild.get_channel_or_thread(target_id)
-            
         return None
 
     async def _get_webhook(self, channel):
@@ -52,10 +40,13 @@ class Move(commands.Cog):
         if not isinstance(channel, discord.TextChannel): return None
         try:
             webhooks = await channel.webhooks()
-            webhook = discord.utils.get(webhooks, name="MoveBotWebhook")
-            if webhook is None: webhook = await channel.create_webhook(name="MoveBotWebhook")
-            return webhook
-        except Exception as e: logger.warning(f"Webhook error: {e}"); return None
+            for w in webhooks:
+                if w.name == "MoveBotWebhook" and w.token:
+                    return w
+            return await channel.create_webhook(name="MoveBotWebhook")
+        except Exception as e:
+            logger.warning(f"Webhook error: {e}")
+            return None
 
     async def _copy_messages(self, source: discord.abc.Messageable, target, limit: int, header: str = None, after: datetime = None, before: datetime = None):
         messages = []
@@ -70,21 +61,42 @@ class Move(commands.Cog):
         if header:
             separator = discord.Embed(title=f"📂 {header}", description="─────────────────────────────", color=discord.Color.light_grey())
             if after or before: separator.set_footer(text=f"Period: {after or 'Start'} ～ {before or 'Now'}")
-            if webhook: await webhook.send(username="System", avatar_url=self.bot.user.display_avatar.url, embed=separator, thread=target_thread)
-            elif hasattr(target, "send"): await target.send(embed=separator)
+            try:
+                if webhook: await webhook.send(username="System", avatar_url=self.bot.user.display_avatar.url, embed=separator, thread=target_thread)
+                elif hasattr(target, "send"): await target.send(embed=separator)
+            except: pass
 
         count = 0
         for msg in messages:
             if msg.content == "" and not msg.embeds and not msg.attachments: continue
-            content = msg.content; files = []
+            content = msg.content
+            files = []
+            
             for attachment in msg.attachments:
-                try: files.append(await attachment.to_file())
-                except: content += f"\n[添付ファイル転送エラー: {attachment.url}]"
+                try:
+                    if attachment.size > 8 * 1024 * 1024:
+                        content += f"\n[File too large: {attachment.url}]"
+                    else:
+                        files.append(await attachment.to_file())
+                except Exception as e:
+                    content += f"\n[Attachment Error: {attachment.url}]"
+                    logger.error(f"File download error: {e}")
+
             try:
-                if webhook: await webhook.send(content=content, username=msg.author.display_name, avatar_url=msg.author.display_avatar.url, embeds=msg.embeds, files=files, thread=target_thread, wait=True)
-                elif hasattr(target, "send"): prefix = f"**{msg.author.display_name}**: "; await target.send(content=prefix + content, embeds=msg.embeds, files=files)
-                count += 1; await asyncio.sleep(0.7)
-            except Exception as e: logger.error(f"Copy error at {count}: {e}"); continue
+                if len(content) > 2000 and not webhook:
+                    content = content[:1900] + "\n...(truncated)"
+                
+                if webhook: 
+                    await webhook.send(content=content, username=msg.author.display_name, avatar_url=msg.author.display_avatar.url, embeds=msg.embeds, files=files, thread=target_thread, wait=True)
+                elif hasattr(target, "send"): 
+                    prefix = f"**{msg.author.display_name}**: "
+                    await target.send(content=prefix + content, embeds=msg.embeds, files=files)
+                
+                count += 1
+                await asyncio.sleep(0.8)
+            except Exception as e: 
+                logger.error(f"Copy error at {count}: {e}")
+                continue
         return count
 
     async def _get_forum_threads(self, forum: discord.ForumChannel):
@@ -101,14 +113,12 @@ class Move(commands.Cog):
         threads.sort(key=lambda t: t.created_at or datetime.now().astimezone())
         return threads
 
-    # オートコンプリート (ID入力を補助するために残す)
     async def channel_autocomplete(self, itx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         choices = []
         threads = itx.guild.threads
         channels = itx.guild.channels
         search_text = current.lower().lstrip('#').replace('"', '')
 
-        # スレッド優先
         for t in threads:
             if search_text in t.name.lower():
                 choices.append(app_commands.Choice(name=f"Thread: {t.name}", value=str(t.id)))
@@ -127,19 +137,16 @@ class Move(commands.Cog):
     async def move(self, itx: discord.Interaction, target: str, source: str = None, limit: int = 100, since: str = None, until: str = None):
         await itx.response.defer(ephemeral=True)
 
-        # 1. Source解決
         source_input = source if source else itx.channel
         real_source = await self._resolve_channel(itx.guild, source_input)
 
         if not real_source:
-            # IDじゃなかったら弾く
-            await itx.followup.send(f"⚠️ 移動元が見つかりません。**ID** または **候補リスト** から指定してください。\n入力値: `{source}`", ephemeral=True); return
+            await itx.followup.send(f"⚠️ 移動元が見つかりません。IDまたは候補リストから指定してください。\n入力値: `{source}`", ephemeral=True); return
 
-        # 2. Target解決
         real_target = await self._resolve_channel(itx.guild, target)
 
         if not real_target:
-            await itx.followup.send(f"⚠️ 移動先が見つかりません。**ID** または **候補リスト** から指定してください。\n入力値: `{target}`", ephemeral=True); return
+            await itx.followup.send(f"⚠️ 移動先が見つかりません。IDまたは候補リストから指定してください。\n入力値: `{target}`", ephemeral=True); return
 
         if real_source.id == real_target.id:
             await itx.followup.send(f"⚠️ エラー: 移動元と移動先が同じIDです ({real_source.id})", ephemeral=True); return
@@ -151,7 +158,6 @@ class Move(commands.Cog):
         total_moved = 0; report = []
         s, t = real_source, real_target
 
-        # Logic
         if isinstance(s, discord.CategoryChannel):
             if isinstance(t, discord.CategoryChannel): await itx.followup.send("⚠️ カテゴリ間の移動は手動で行ってください。", ephemeral=True); return
             elif isinstance(t, discord.TextChannel):
