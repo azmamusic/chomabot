@@ -1,32 +1,24 @@
-# utils/persistent_views.py
-from __future__ import annotations
-from typing import List, Type
-import logging
 import discord
+import logging
 
-log = logging.getLogger("discordbot")
+logger = logging.getLogger("utils.persistent_views")
 
-_REGISTERED: List[Type[discord.ui.View]] = []
+_persistent_view_classes = []
 
-def persistent_view(cls: Type[discord.ui.View]) -> Type[discord.ui.View]:
+def persistent_view(cls):
     """
-    View クラスを登録するだけの軽量デコレータ。
-    - __init__ は書き換えない（各クラスで timeout=None を指定してください）
-    - 起動時に register_all() で bot.add_view される
+    Viewクラスに付与するデコレータ。
     """
-    if cls not in _REGISTERED:
-        _REGISTERED.append(cls)
+    _persistent_view_classes.append(cls)
     return cls
 
-def register_all(bot: discord.Client) -> None:
+def register_all(bot):
     """
-    import 済みの persistent View を一括登録。
-    load_extension が終わった後に呼んでください。
+    Botの setup_hook で呼び出し、一括登録します。
     """
-    for cls in _REGISTERED:
+    for view_cls in _persistent_view_classes:
         try:
-            bot.add_view(cls())  # 各 View は custom_id を固定している前提
-            log.info("Registered persistent view: %s", cls.__name__)
-        except Exception:
-            log.exception("[persistent] failed to add %s", cls.__name__)
-
+            bot.add_view(view_cls())
+            logger.info(f"Registered persistent view: {view_cls.__name__}")
+        except Exception as e:
+            logger.error(f"Failed to register persistent view {view_cls.__name__}: {e}")
