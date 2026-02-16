@@ -147,11 +147,18 @@ class ContractModal(discord.ui.Modal, title="依頼内容 (1/2: 契約情報)"):
         for i in [self.t_name, self.t_title, self.t_type, self.t_deadline, self.t_budget]: self.add_item(i)
     async def on_submit(self, itx: discord.Interaction):
         cog = itx.client.get_cog("Tickets")
-        await itx.response.defer(ephemeral=True)
+        # 修正: ネットワーク不安定時の Unknown Interaction 対策
+        try:
+            await itx.response.defer(ephemeral=True)
+        except discord.NotFound:
+            logger.warning(f"Interaction timed out during ContractModal submit for {itx.user.display_name}")
+            return
+        
         try:
             ch, msg = await cog.create_ticket_entry(itx.guild, itx.user, self.assignee, self.t_name.value, self.t_title.value, self.t_type.value, self.t_deadline.value, self.t_budget.value)
             await itx.followup.send(f"✅ チケットを作成しました: {msg.jump_url}", ephemeral=True)
-        except Exception as e: await itx.followup.send(f"エラー: {e}", ephemeral=True)
+        except Exception as e: 
+            await itx.followup.send(f"エラー: {e}", ephemeral=True)
 
 class TechModal(discord.ui.Modal, title="依頼内容 (2/2: 技術情報)"):
     def __init__(self):
@@ -182,7 +189,13 @@ class TechModal(discord.ui.Modal, title="依頼内容 (2/2: 技術情報)"):
 class TicketControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="🎵 詳細入力", style=discord.ButtonStyle.primary, custom_id="btn_tech")
-    async def btn_tech(self, itx: discord.Interaction, button: discord.ui.Button): await itx.response.send_modal(TechModal())
+    async def btn_tech(self, itx: discord.Interaction, button: discord.ui.Button): 
+        # 修正: ネットワーク不安定時の Unknown Interaction 対策
+        try:
+            await itx.response.send_modal(TechModal())
+        except discord.NotFound:
+            logger.warning(f"Interaction timed out during btn_tech for {itx.user.display_name}")
+
     @discord.ui.button(label="⚙️ 管理", style=discord.ButtonStyle.secondary, custom_id="btn_manage", row=1)
     async def btn_manage(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
@@ -580,7 +593,10 @@ class Tickets(commands.Cog):
             if last_log and (datetime.datetime.now() - datetime.datetime.fromisoformat(last_log)).total_seconds() < cooldown: return 
         final_content = content
         if not close_thread:
-            aid = t_data.get("assignee_id"); g_conf = self.db.get_guild_config(channel.guild.id); m_list = []
+            aid = t_data.get("assignee_id"); g_conf = self.db.get_guild_config(channel.guild.id)
+            # 修正: Assigneeへの強制メンションを削除 (m_listを空で初期化)
+            m_list = [] 
+            
             r_ids = None
             if aid: p = self.db.get_user_profile(channel.guild.id, aid); r_ids = p.get("mention_roles")
             if not r_ids: r_ids = g_conf.get("mention_roles", [])
