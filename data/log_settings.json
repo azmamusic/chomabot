@@ -1,0 +1,34 @@
+{
+    "1049932269554515998": {
+        "routes": {
+            "channels": {},
+            "categories": {}
+        },
+        "ignore": {
+            "roles": [
+            ],
+            "channels": [
+            ],
+            "categories": []
+        },
+        "reception_role_ids": [
+        ],
+        "cooldown_seconds": 300
+    },
+    "1456289201409753119": {
+        "ignore": {
+            "roles": [
+            ],
+            "categories": [],
+            "channels": [
+            ]
+        },
+        "routes": {
+            "channels": {},
+            "categories": {}
+        },
+        "reception_role_ids": [
+        ],
+        "cooldown_seconds": 600
+    }
+}
