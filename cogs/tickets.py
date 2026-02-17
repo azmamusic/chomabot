@@ -647,6 +647,10 @@ class Tickets(commands.Cog):
         return msg
 
     async def create_ticket_entry(self, guild, creator, assignee, creator_name, title, c_type, deadline, budget):
+        # Ensure creator is a Member object for correct mention formatting
+        if isinstance(creator, (discord.User, discord.Object)):
+            creator = guild.get_member(creator.id) or creator
+            
         p = self.db.get_user_profile(guild.id, assignee.id)
         reuse = self._get_setting(guild.id, p, "reuse_channel", DEFAULT_REUSE_CHANNEL)
         target_channel = None
@@ -738,6 +742,7 @@ class Tickets(commands.Cog):
         gid, cid = str(channel.guild.id), str(channel.id)
         t_data = self.db.timers.get(gid, {}).get(cid, {})
         thread = None
+        created_new = False
 
         if t_data.get("mirror_thread_id"):
             try:
@@ -763,7 +768,8 @@ class Tickets(commands.Cog):
 
         if not thread:
             try:
-                t_w_msg = await forum.create_thread(name=channel.name, content=f"🆕 **New Ticket Log Created** (Source: {channel.mention})", embed=embed)
+                mention_str = " ".join(mentions) if mentions else ""
+                t_w_msg = await forum.create_thread(name=channel.name, content=f"🆕 **New Ticket Log Created** (Source: {channel.mention})\n{mention_str}", embed=embed)
                 thread = t_w_msg.thread
                 self.db.timers[gid][cid]["mirror_thread_id"] = thread.id
                 self.db.save_timers()
@@ -773,7 +779,7 @@ class Tickets(commands.Cog):
             if thread.archived:
                 await thread.edit(archived=False)
 
-        if mentions:
+        if mentions and not created_new:
             await thread.send(content=f"🔔 **Notification:** {' '.join(mentions)}")
 
     async def log_to_forum(self, channel, content=None, embed=None, attachments=None, is_update=False, close_thread=False, view=None):
