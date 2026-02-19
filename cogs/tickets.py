@@ -256,7 +256,7 @@ class StaffMenuView(discord.ui.View):
 
 class CloseChoiceView(discord.ui.View):
     def __init__(self, target_channel):
-         super().__init__(timeout=None)
+        super().__init__(timeout=None)
         self.target_channel = target_channel
 
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
@@ -341,7 +341,7 @@ class AdminStaffDetailView(discord.ui.View):
 
 class TimerEditModal(discord.ui.Modal, title="タイマー設定"):
     def __init__(self, h, d, target_channel):
-         super().__init__()
+        super().__init__()
         self.target_channel = target_channel
         self.h = discord.ui.TextInput(label="リマインド(h)", default=str(h))
         self.d = discord.ui.TextInput(label="自動クローズ(day)", default=str(d))
