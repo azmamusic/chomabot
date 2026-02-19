@@ -1193,6 +1193,22 @@ class Tickets(commands.Cog):
     async def my_dash(self, itx: discord.Interaction):
         embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
         await itx.response.send_message(embed=embed, view=MyDashboardView(), ephemeral=True)
+assignee))
+
+    @ticket_group.command(name="manage", description="現在のチケットの管理メニューを呼び出します")
+    async def manage_cmd(self, itx: discord.Interaction):
+        gid, cid = str(itx.guild_id), str(itx.channel.id)
+        if cid not in self.db.timers.get(gid, {}):
+            await itx.response.send_message("⚠️ このチャンネルはチケットとして登録されていません。", ephemeral=True)
+            return
+        t_data = self.db.timers[gid][cid]
+        is_assignee = t_data.get("assignee_id") == itx.user.id
+        is_admin = itx.user.guild_permissions.manage_channels
+        if not (is_assignee or is_admin):
+            await itx.response.send_message("担当者または管理者のみ使用可能です。", ephemeral=True)
+            return
+        embed = await self.create_ticket_dashboard_embed(itx.channel, t_data)
+        await itx.response.send_message(embed=embed, view=StaffMenuView(), ephemeral=True)
 
     @ticket_group.command(name="override", description="【管理者】ユーザー強制変更")
     @app_commands.checks.has_permissions(manage_roles=True)
