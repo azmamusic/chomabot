@@ -232,43 +232,46 @@ class TicketControlView(discord.ui.View):
             await itx.response.send_message("担当者のみ使用可能です。", ephemeral=True)
             return
         embed = await cog.create_ticket_dashboard_embed(itx.channel, t_data)
-        await itx.response.send_message(embed=embed, view=StaffMenuView(), ephemeral=True)
+        await itx.response.send_message(embed=embed, view=StaffMenuView(itx.channel), ephemeral=True)
+ 
 
 class StaffMenuView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
+    def __init__(self, target_channel):
+         super().__init__(timeout=180)
+        self.target_channel = target_channel
 
     @discord.ui.button(label="⏱️ タイマー設定", style=discord.ButtonStyle.secondary)
     async def timer_settings(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
-        t = cog.db.timers.get(str(itx.guild_id), {}).get(str(itx.channel.id), {})
-        await itx.response.send_modal(TimerEditModal(t.get("timeout_hours", DEFAULT_TIMEOUT_HOURS), t.get("auto_close_days", DEFAULT_AUTO_CLOSE_DAYS)))
+        t = cog.db.timers.get(str(itx.guild_id), {}).get(str(self.target_channel.id), {})
+        await itx.response.send_modal(TimerEditModal(t.get("timeout_hours", DEFAULT_TIMEOUT_HOURS), t.get("auto_close_days", DEFAULT_AUTO_CLOSE_DAYS), self.target_channel))
 
     @discord.ui.button(label="📂 提出先設定", style=discord.ButtonStyle.success)
     async def set_url(self, itx: discord.Interaction, button: discord.ui.Button):
-        await itx.response.send_modal(SubmitUrlModalExt())
+        await itx.response.send_modal(SubmitUrlModalExt(self.target_channel))
 
     @discord.ui.button(label="✅ 完了/クローズ", style=discord.ButtonStyle.danger)
     async def close(self, itx: discord.Interaction, button: discord.ui.Button):
-        await itx.response.send_message("処理を選択:", view=CloseChoiceView(), ephemeral=True)
+        await itx.response.send_message("処理を選択:", view=CloseChoiceView(self.target_channel), ephemeral=True)
 
 class CloseChoiceView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self, target_channel):
+         super().__init__(timeout=None)
+        self.target_channel = target_channel
 
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
-        await cog.close_ticket(itx.channel, itx.user)
+        await cog.close_ticket(self.target_channel, itx.user)
         await itx.response.send_message("✅ 完了しました。", ephemeral=True)
 
     @discord.ui.button(label="チャンネル削除", style=discord.ButtonStyle.danger)
     async def delete_ch(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
-        await cog.log_to_forum(itx.channel, content="🗑️ 手動削除されました。", close_thread=True)
+        await cog.log_to_forum(self.target_channel, content="🗑️ 手動削除されました。", close_thread=True)
         await itx.response.send_message("削除します...", ephemeral=True)
         await asyncio.sleep(2)
-        await itx.channel.delete()
+        await self.target_channel.delete()
 
 class MyDashboardView(discord.ui.View):
     def __init__(self):
@@ -337,8 +340,9 @@ class AdminStaffDetailView(discord.ui.View):
         await itx.response.edit_message(embed=embed, view=AdminDashboardView(self.cog, self.guild))
 
 class TimerEditModal(discord.ui.Modal, title="タイマー設定"):
-    def __init__(self, h, d):
-        super().__init__()
+    def __init__(self, h, d, target_channel):
+         super().__init__()
+        self.target_channel = target_channel
         self.h = discord.ui.TextInput(label="リマインド(h)", default=str(h))
         self.d = discord.ui.TextInput(label="自動クローズ(day)", default=str(d))
         self.add_item(self.h)
@@ -351,7 +355,7 @@ class TimerEditModal(discord.ui.Modal, title="タイマー設定"):
             await itx.response.send_message("数値エラー", ephemeral=True)
             return
         cog = itx.client.get_cog("Tickets")
-        gid, cid = str(itx.guild_id), str(itx.channel.id)
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
         if cid in cog.db.timers.get(gid, {}):
             cog.db.timers[gid][cid].update({"timeout_hours": h, "auto_close_days": d, "last_message_at": datetime.datetime.now().isoformat(), "reminded": False})
             cog.db.save_timers()
@@ -360,9 +364,13 @@ class TimerEditModal(discord.ui.Modal, title="タイマー設定"):
 class SubmitUrlModalExt(discord.ui.Modal, title="提出先URL"):
     url = discord.ui.TextInput(label="URL", max_length=200)
 
+    def __init__(self, target_channel):
+        super().__init__()
+        self.target_channel = target_channel
+
     async def on_submit(self, itx: discord.Interaction):
         target_msg = None
-        async for msg in itx.channel.history(limit=20):
+        async for msg in self.target_channel.history(limit=20):
             if msg.author.id == itx.client.user.id and msg.embeds and msg.embeds[0].color != discord.Color.dark_grey():
                 target_msg = msg
                 break
@@ -385,7 +393,7 @@ class SubmitUrlModalExt(discord.ui.Modal, title="提出先URL"):
             embed.add_field(name=f["name"], value=f["value"], inline=f["inline"])
         await target_msg.edit(embed=embed)
         cog = itx.client.get_cog("Tickets")
-        await cog.log_to_forum(itx.channel, content=f"📂 提出先設定: {self.url.value}")
+        await cog.log_to_forum(self.target_channel, content=f"📂 提出先設定: {self.url.value}")
         await itx.response.send_message("更新しました", ephemeral=True)
 
 class ProfileTemplateModal(discord.ui.Modal, title="テンプレート編集"):
@@ -1108,6 +1116,17 @@ class Tickets(commands.Cog):
         embed = await self.create_admin_dashboard_embed(itx.guild)
         await itx.response.send_message(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
 
+    @admin_group.command(name="manage", description="指定したチケットの管理メニューを呼び出します")
+    async def admin_manage(self, itx: discord.Interaction, channel: Optional[discord.TextChannel] = None):
+        target_channel = channel or itx.channel
+        gid, cid = str(itx.guild_id), str(target_channel.id)
+        if cid not in self.db.timers.get(gid, {}):
+            await itx.response.send_message(f"⚠️ {target_channel.mention} はチケットとして登録されていません。", ephemeral=True)
+            return
+        t_data = self.db.timers[gid][cid]
+        embed = await self.create_ticket_dashboard_embed(target_channel, t_data)
+        await itx.response.send_message(embed=embed, view=StaffMenuView(target_channel), ephemeral=True)
+
     @admin_group.command(name="link", description="チケット紐付け")
     async def admin_link(self, itx: discord.Interaction, channel: discord.TextChannel, thread_id: Optional[str] = None, create_thread: bool = False, assignee: Optional[discord.Member] = None, creator: Optional[discord.Member] = None):
         gid, cid = str(itx.guild_id), str(channel.id)
@@ -1193,21 +1212,6 @@ class Tickets(commands.Cog):
     async def my_dash(self, itx: discord.Interaction):
         embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
         await itx.response.send_message(embed=embed, view=MyDashboardView(), ephemeral=True)
-
-    @ticket_group.command(name="manage", description="現在のチケットの管理メニューを呼び出します")
-    async def manage_cmd(self, itx: discord.Interaction):
-        gid, cid = str(itx.guild_id), str(itx.channel.id)
-        if cid not in self.db.timers.get(gid, {}):
-            await itx.response.send_message("⚠️ このチャンネルはチケットとして登録されていません。", ephemeral=True)
-            return
-        t_data = self.db.timers[gid][cid]
-        is_assignee = t_data.get("assignee_id") == itx.user.id
-        is_admin = itx.user.guild_permissions.manage_channels
-        if not (is_assignee or is_admin):
-            await itx.response.send_message("担当者または管理者のみ使用可能です。", ephemeral=True)
-            return
-        embed = await self.create_ticket_dashboard_embed(itx.channel, t_data)
-        await itx.response.send_message(embed=embed, view=StaffMenuView(), ephemeral=True)
 
     @ticket_group.command(name="override", description="【管理者】ユーザー強制変更")
     @app_commands.checks.has_permissions(manage_roles=True)
