@@ -593,7 +593,7 @@ class Tickets(commands.Cog):
         gid = str(guild.id)
         for t in self.db.timers.get(gid, {}).values():
             if t.get("assignee_id") == assignee.id and t.get("creator_id") == creator.id and t.get("active_tickets"):
-                current_user_tickets += 1
+                current_user_tickets += len(t.get("active_tickets", []))
         if current_user_tickets >= max_s:
             return f"⛔ あなたは既に {current_user_tickets}件 依頼中です。(上限: {max_s}件)"
         return None
@@ -1023,8 +1023,8 @@ class Tickets(commands.Cog):
                 active = 0
                 if gid in self.db.timers:
                     for t in self.db.timers[gid].values():
-                        if int(t.get("assignee_id", 0)) == member.id:
-                            active += 1
+                        if int(t.get("assignee_id", 0)) == member.id and t.get("active_tickets"):
+                            active += len(t.get("active_tickets", []))
                 max_s = p.get("max_slots") or g.get("max_slots", DEFAULT_MAX_SLOTS)
                 text_lines.append(f"{status_icon} **{member.display_name}** | Act: **{active}** | Lim: {max_s}")
             chunk = ""
