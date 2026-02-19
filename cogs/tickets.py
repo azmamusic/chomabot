@@ -1193,7 +1193,6 @@ class Tickets(commands.Cog):
     async def my_dash(self, itx: discord.Interaction):
         embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
         await itx.response.send_message(embed=embed, view=MyDashboardView(), ephemeral=True)
-assignee))
 
     @ticket_group.command(name="manage", description="現在のチケットの管理メニューを呼び出します")
     async def manage_cmd(self, itx: discord.Interaction):
