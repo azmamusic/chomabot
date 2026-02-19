@@ -237,7 +237,7 @@ class TicketControlView(discord.ui.View):
 
 class StaffMenuView(discord.ui.View):
     def __init__(self, target_channel):
-         super().__init__(timeout=180)
+        super().__init__(timeout=180)
         self.target_channel = target_channel
 
     @discord.ui.button(label="⏱️ タイマー設定", style=discord.ButtonStyle.secondary)
