@@ -1413,8 +1413,14 @@ class Tickets(commands.Cog):
             await itx.response.send_message(f"⚠️ {target_channel.mention} はチケットとして登録されていません。", ephemeral=True)
             return
         t_data = self.db.timers[gid][cid]
+        active_tickets = t_data.get("active_tickets", [])
+        if not active_tickets:
+            await itx.response.send_message("⚠️ このチャンネルに稼働中のチケットがありません。", ephemeral=True)
+            return
+            
+        ticket_msg_id = active_tickets[-1]
         embed = await self.create_ticket_dashboard_embed(target_channel, t_data)
-        await itx.response.send_message(embed=embed, view=AssigneeMenuView(target_channel, itx.message.id), ephemeral=True)
+        await itx.response.send_message(embed=embed, view=AssigneeMenuView(target_channel, ticket_msg_id), ephemeral=True)
 
     @admin_group.command(name="link", description="チケット紐付け")
     async def admin_link(self, itx: discord.Interaction, channel: discord.TextChannel, thread_id: Optional[str] = None, create_thread: bool = False, assignee: Optional[discord.Member] = None, creator: Optional[discord.Member] = None):
@@ -1542,6 +1548,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
