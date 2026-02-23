@@ -24,7 +24,7 @@ DEFAULT_AUTO_CLOSE_ENABLED = True
 DEFAULT_LOG_COOLDOWN = 300
 
 # ====================================================
-# Data Management (Refactored for Performance)
+# Data Management
 # ====================================================
 class TicketDataManager:
     def __init__(self):
@@ -232,10 +232,9 @@ class TicketControlView(discord.ui.View):
             await itx.response.send_message("担当者のみ使用可能です。", ephemeral=True)
             return
         embed = await cog.create_ticket_dashboard_embed(itx.channel, t_data)
-        await itx.response.send_message(embed=embed, view=StaffMenuView(itx.channel), ephemeral=True)
+        await itx.response.send_message(embed=embed, view=AssigneeMenuView(itx.channel), ephemeral=True)
  
-
-class StaffMenuView(discord.ui.View):
+class AssigneeMenuView(discord.ui.View):
     def __init__(self, target_channel):
         super().__init__(timeout=180)
         self.target_channel = target_channel
@@ -250,11 +249,154 @@ class StaffMenuView(discord.ui.View):
     async def set_url(self, itx: discord.Interaction, button: discord.ui.Button):
         await itx.response.send_modal(SubmitUrlModalExt(self.target_channel))
 
-    @discord.ui.button(label="✅ 完了/クローズ", style=discord.ButtonStyle.danger)
-    async def close(self, itx: discord.Interaction, button: discord.ui.Button):
-        await itx.response.send_message("処理を選択:", view=CloseChoiceView(self.target_channel), ephemeral=True)
+    @discord.ui.button(label="📋 タスクリスト編集", style=discord.ButtonStyle.primary, row=1)
+    async def edit_tasks(self, itx: discord.Interaction, button: discord.ui.Button):
+        cog = itx.client.get_cog("Tickets")
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
+        t_data = cog.db.timers.get(gid, {}).get(cid, {})
+        current_tasks = t_data.get("task_list", [])
+        text_val = "\n".join([t["name"] for t in current_tasks])
+        await itx.response.send_modal(TaskListEditModal(self.target_channel, text_val))
 
-class CloseChoiceView(discord.ui.View):
+    @discord.ui.button(label="✅ 完了/クローズ", style=discord.ButtonStyle.danger, row=1)
+    async def close(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.send_message("処理を選択:", view=AssigneeCloseView(self.target_channel), ephemeral=True)
+
+class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
+    def __init__(self, target_channel, current_text=""):
+        super().__init__()
+        self.target_channel = target_channel
+        self.input_text = discord.ui.TextInput(
+            label="タスク (改行またはカンマ区切り)",
+            style=discord.TextStyle.paragraph,
+            default=current_text,
+            required=False,
+            placeholder="Mix提出\nリテイク対応\nマスタリング"
+        )
+        self.add_item(self.input_text)
+
+    async def on_submit(self, itx: discord.Interaction):
+        cog = itx.client.get_cog("Tickets")
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
+        
+        raw_text = self.input_text.value
+        # Split by newline or comma
+        parts = re.split(r'[,\n]+', raw_text)
+        new_names = [p.strip() for p in parts if p.strip()]
+
+        if cid in cog.db.timers.get(gid, {}):
+            old_list = cog.db.timers[gid][cid].get("task_list", [])
+            # Map old task completion status: name -> completed
+            status_map = {t["name"]: t["completed"] for t in old_list}
+            
+            new_list = []
+            for name in new_names:
+                new_list.append({
+                    "name": name,
+                    "completed": status_map.get(name, False)
+                })
+            
+            cog.db.timers[gid][cid]["task_list"] = new_list
+            cog.db.save_timers()
+            
+            await cog.log_to_forum(self.target_channel, content=f"📋 タスクリストが更新されました。")
+            await itx.response.send_message(f"✅ タスクリストを更新しました ({len(new_list)}件)", ephemeral=True)
+        else:
+            await itx.response.send_message("⚠️ チケットデータが見つかりません。", ephemeral=True)
+
+@persistent_view
+class ForumTaskLogView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📋 タスク操作", style=discord.ButtonStyle.secondary, custom_id="forum_task_op")
+    async def open_panel(self, itx: discord.Interaction, button: discord.ui.Button):
+        cog = itx.client.get_cog("Tickets")
+        # Find ticket ID from forum thread ID (itx.channel_id)
+        gid = str(itx.guild_id)
+        cid = None
+        target_data = None
+        
+        # Search timers for matching mirror_thread_id
+        if gid in cog.db.timers:
+            for ch_id, data in cog.db.timers[gid].items():
+                if data.get("mirror_thread_id") == itx.channel.id:
+                    cid = ch_id
+                    target_data = data
+                    break
+        
+        if not cid:
+            await itx.response.send_message("⚠️ このスレッドに関連付けられたチケットが見つかりません。", ephemeral=True)
+            return
+
+        target_channel = itx.guild.get_channel(int(cid))
+        task_list = target_data.get("task_list", [])
+        
+        if not task_list:
+             await itx.response.send_message("✅ 全てのタスクが完了しているか、タスクがありません。", ephemeral=True)
+             return
+
+        embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
+        desc = ""
+        for t in task_list:
+            mark = "✅" if t["completed"] else "☑️"
+            desc += f"{mark} {t['name']}\n"
+        embed.description = desc or "タスクなし"
+
+        await itx.response.send_message(embed=embed, view=TaskActionView(target_channel, task_list), ephemeral=True)
+
+class TaskActionView(discord.ui.View):
+    def __init__(self, target_channel, task_list):
+        super().__init__(timeout=180)
+        self.target_channel = target_channel
+        self.task_list = task_list
+        
+        # Check for uncompleted tasks
+        self.next_task = next((t for t in task_list if not t["completed"]), None)
+        
+        btn_label = f"▶️ 次を完了: {self.next_task['name']}" if self.next_task else "🎉 全て完了"
+        btn_style = discord.ButtonStyle.success if self.next_task else discord.ButtonStyle.secondary
+        btn_disabled = self.next_task is None
+        
+        self.complete_next_btn = discord.ui.Button(label=btn_label, style=btn_style, disabled=btn_disabled)
+        self.complete_next_btn.callback = self.complete_next
+        self.add_item(self.complete_next_btn)
+        
+        self.edit_btn = discord.ui.Button(label="📝 リスト編集", style=discord.ButtonStyle.secondary)
+        self.edit_btn.callback = self.edit_list
+        self.add_item(self.edit_btn)
+
+    async def complete_next(self, itx: discord.Interaction):
+        if not self.next_task:
+            return
+        
+        cog = itx.client.get_cog("Tickets")
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
+        
+        if cid in cog.db.timers.get(gid, {}):
+            tasks = cog.db.timers[gid][cid].get("task_list", [])
+            target_name = self.next_task["name"]
+            
+            # Find and update
+            for t in tasks:
+                if t["name"] == target_name and not t["completed"]:
+                    t["completed"] = True
+                    break
+            
+            cog.db.timers[gid][cid]["task_list"] = tasks
+            cog.db.save_timers()
+            
+            # System log to forum
+            await cog.log_to_forum(self.target_channel, content=f"✅ タスク **『{target_name}』** が完了しました。")
+            await itx.response.send_message(f"✅ タスク『{target_name}』を完了しました。", ephemeral=True)
+        else:
+            await itx.response.send_message("⚠️ エラー: データ不整合", ephemeral=True)
+
+    async def edit_list(self, itx: discord.Interaction):
+        current_text = "\n".join([t["name"] for t in self.task_list])
+        await itx.response.send_modal(TaskListEditModal(self.target_channel, current_text))
+
+class AssigneeCloseView(discord.ui.View):
     def __init__(self, target_channel):
         super().__init__(timeout=None)
         self.target_channel = target_channel
@@ -262,6 +404,19 @@ class CloseChoiceView(discord.ui.View):
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
+        
+        # Check uncompleted tasks
+        if cid in cog.db.timers.get(gid, {}):
+            tasks = cog.db.timers[gid][cid].get("task_list", [])
+            uncompleted = [t["name"] for t in tasks if not t["completed"]]
+            
+            if uncompleted:
+                embed = discord.Embed(title="⚠️ 未完了のタスクがあります", description="以下のタスクが残っています。強制的に完了しますか？", color=discord.Color.orange())
+                embed.add_field(name="残タスク", value="\n".join([f"・{n}" for n in uncompleted]))
+                await itx.response.send_message(embed=embed, view=TaskForceCloseView(self.target_channel), ephemeral=True)
+                return
+
         await cog.close_ticket(self.target_channel, itx.user)
         await itx.response.send_message("✅ 完了しました。", ephemeral=True)
 
@@ -272,6 +427,21 @@ class CloseChoiceView(discord.ui.View):
         await itx.response.send_message("削除します...", ephemeral=True)
         await asyncio.sleep(2)
         await self.target_channel.delete()
+
+class TaskForceCloseView(discord.ui.View):
+    def __init__(self, target_channel):
+        super().__init__(timeout=180)
+        self.target_channel = target_channel
+
+    @discord.ui.button(label="⚠️ 強制クローズ", style=discord.ButtonStyle.danger)
+    async def force_close(self, itx: discord.Interaction, button: discord.ui.Button):
+        cog = itx.client.get_cog("Tickets")
+        await cog.close_ticket(self.target_channel, itx.user)
+        await itx.response.send_message("✅ 強制完了しました。", ephemeral=True)
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
+    async def cancel(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.send_message("キャンセルしました。", ephemeral=True)
 
 class MyDashboardView(discord.ui.View):
     def __init__(self):
@@ -297,7 +467,7 @@ class AdminDashboardView(discord.ui.View):
         self.cog = cog
         self.guild = guild
         if cog and guild:
-            self.add_item(AdminStaffSelect(cog, guild))
+            self.add_item(AdminAssigneeSelect(cog, guild))
 
     @discord.ui.button(label="📝 共通テンプレート編集", style=discord.ButtonStyle.secondary, row=1)
     async def tmpl(self, itx: discord.Interaction, button: discord.ui.Button):
@@ -311,7 +481,7 @@ class AdminDashboardView(discord.ui.View):
         embed = await cog.create_admin_dashboard_embed(itx.guild)
         await itx.response.edit_message(embed=embed, view=AdminDashboardView(cog, itx.guild))
 
-class AdminStaffSelect(discord.ui.Select):
+class AdminAssigneeSelect(discord.ui.Select):
     def __init__(self, cog, guild):
         options = cog.get_assignee_options(guild, sort_key=None)
         if not options:
@@ -326,9 +496,9 @@ class AdminStaffSelect(discord.ui.Select):
         target = itx.guild.get_member(target_id)
         name = target.display_name if target else f"Unknown({target_id})"
         embed = await cog.create_assignee_detail_embed(itx.guild, target_id, name)
-        await itx.response.edit_message(embed=embed, view=AdminStaffDetailView(cog, itx.guild))
+        await itx.response.edit_message(embed=embed, view=AdminAssigneeDetailView(cog, itx.guild))
 
-class AdminStaffDetailView(discord.ui.View):
+class AdminAssigneeDetailView(discord.ui.View):
     def __init__(self, cog, guild):
         super().__init__(timeout=180)
         self.cog = cog
@@ -735,7 +905,7 @@ class Tickets(commands.Cog):
             "assignee_id": assignee.id, "creator_id": creator.id, "active_tickets": [],
             "auto_close_enabled": self._get_setting(guild.id, profile, "auto_close_enabled", DEFAULT_AUTO_CLOSE_ENABLED),
             "auto_close_days": self._get_setting(guild.id, profile, "auto_close_days", DEFAULT_AUTO_CLOSE_DAYS),
-            "mirror_thread_id": None, "last_log_at": None
+            "mirror_thread_id": None, "last_log_at": None, "task_list": []
         }
         self.db.save_timers()
         return channel
@@ -836,9 +1006,41 @@ class Tickets(commands.Cog):
             elif m_list:
                 mention_str = " ".join(m_list)
                 final_content = f"{mention_str}\n{content}" if content else mention_str
+
+        # Append Task List if exists
+        task_view = None
+        task_list = t_data.get("task_list", [])
+        if task_list and not close_thread:
+            task_str = "\n──────────────\n**📋 タスクリスト**\n"
+            for t in task_list:
+                mark = "✅" if t["completed"] else "☑️"
+                task_str += f"{mark} {t['name']}\n"
+            
+            if embed:
+                # Add to description or last field if possible, or new field?
+                # User preference: "Embedの末尾（または description の最後）"
+                if embed.description:
+                    embed.description += task_str
+                else:
+                    embed.description = task_str
+            else:
+                # If no embed, make one? Or append to content.
+                # Usually logs have embeds or content. If only content, append to content.
+                if final_content:
+                    final_content += task_str
+                else:
+                    final_content = task_str
+            
+            # Use ForumTaskLogView if not overriding view
+            if view is None:
+                task_view = ForumTaskLogView()
+        
+        # Determine final view
+        final_view = view if view else task_view
+
         files = [await a.to_file() for a in attachments] if attachments else []
         try:
-            await thread.send(content=final_content, embed=embed, files=files, view=view)
+            await thread.send(content=final_content, embed=embed, files=files, view=final_view)
             t_data["last_log_at"] = datetime.datetime.now().isoformat()
             self.db.save_timers()
             if close_thread:
@@ -1002,6 +1204,12 @@ class Tickets(commands.Cog):
         embed.add_field(name="📢 Log Extra", value=l_str, inline=True)
         embed.add_field(name="🚫 Ignore Log", value=i_str, inline=True)
         embed.add_field(name="🏷️ Attributes", value=attr_str, inline=False)
+        
+        # Category
+        cat_id = g.get("category_id")
+        cat = guild.get_channel(cat_id) if cat_id else None
+        embed.add_field(name="📂 Default Category", value=cat.name if cat else "なし", inline=True)
+
         a_rid = g.get("assignee_role_id")
         q_rid = g.get("assignee_qual_role_id")
         a_role = guild.get_role(a_rid) if a_rid else None
@@ -1015,7 +1223,7 @@ class Tickets(commands.Cog):
         if target_members:
             accepting_count = len([m for m in target_members if a_role and a_role in m.roles])
             total_count = len(target_members)
-            embed.add_field(name="Staff Stats", value=f"Accepting: **{accepting_count}** / Total: **{total_count}**", inline=False)
+            embed.add_field(name="Assignee Stats", value=f"Accepting: **{accepting_count}** / Total: **{total_count}**", inline=False)
             text_lines = []
             for member in target_members:
                 p = self.db.get_user_profile(guild.id, member.id)
@@ -1042,7 +1250,7 @@ class Tickets(commands.Cog):
     async def create_assignee_detail_embed(self, guild, member_id, name):
         p = self.db.get_user_profile(guild.id, member_id)
         g = self.db.get_guild_config(guild.id)
-        embed = discord.Embed(title=f"👤 Staff Profile: {name}", color=discord.Color.blue())
+        embed = discord.Embed(title=f"👤 Assignee Profile: {name}", color=discord.Color.blue())
         def val_str(key, unit="", transform=lambda x: x):
             pv = p.get(key)
             gv = g.get(key)
@@ -1073,6 +1281,15 @@ class Tickets(commands.Cog):
         i_str = ", ".join([guild.get_role(r).mention for r in i_list if guild.get_role(r)]) or "なし"
         i_label = "(Custom)" if pi is not None else "(Default)"
         embed.add_field(name=f"🚫 Ignore {i_label}", value=i_str, inline=False)
+        
+        # Category
+        pc = p.get("category_id")
+        gc = g.get("category_id")
+        c_id = pc if pc else gc
+        cat = guild.get_channel(c_id) if c_id else None
+        c_label = "(Custom)" if pc else "(Default)"
+        embed.add_field(name=f"📂 Category {c_label}", value=cat.name if cat else "なし", inline=False)
+
         attrs = p.get("attributes", {})
         attr_str = "\n".join([f"{k}: {v}" for k, v in attrs.items()]) or "なし"
         embed.add_field(name="🏷️ Attributes", value=attr_str, inline=True)
@@ -1103,9 +1320,9 @@ class Tickets(commands.Cog):
     attr_group = app_commands.Group(name="attribute", description="属性管理", parent=ticket_group)
 
     @admin_group.command(name="setup", description="サーバー設定の変更")
-    async def admin_setup(self, itx: discord.Interaction, assignee_role: Optional[discord.Role] = None, assignee_qual_role: Optional[discord.Role] = None, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, cooldown: Optional[int] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
+    async def admin_setup(self, itx: discord.Interaction, category: Optional[discord.CategoryChannel] = None, assignee_role: Optional[discord.Role] = None, assignee_qual_role: Optional[discord.Role] = None, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, cooldown: Optional[int] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
         g = self.db.get_guild_config(itx.guild_id)
-        msg = self._update_settings_logic(g, is_guild=True, assignee_role=assignee_role, assignee_qual_role=assignee_qual_role, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, notify_enabled=notify_enabled, name_format=name_format, cooldown=cooldown, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
+        msg = self._update_settings_logic(g, is_guild=True, category=category, assignee_role=assignee_role, assignee_qual_role=assignee_qual_role, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, notify_enabled=notify_enabled, name_format=name_format, cooldown=cooldown, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
         self.db.save_profiles()
         await itx.response.defer(ephemeral=True)
         embed = await self.create_admin_dashboard_embed(itx.guild)
@@ -1125,7 +1342,7 @@ class Tickets(commands.Cog):
             return
         t_data = self.db.timers[gid][cid]
         embed = await self.create_ticket_dashboard_embed(target_channel, t_data)
-        await itx.response.send_message(embed=embed, view=StaffMenuView(target_channel), ephemeral=True)
+        await itx.response.send_message(embed=embed, view=AssigneeMenuView(target_channel), ephemeral=True)
 
     @admin_group.command(name="link", description="チケット紐付け")
     async def admin_link(self, itx: discord.Interaction, channel: discord.TextChannel, thread_id: Optional[str] = None, create_thread: bool = False, assignee: Optional[discord.Member] = None, creator: Optional[discord.Member] = None):
@@ -1139,7 +1356,7 @@ class Tickets(commands.Cog):
             p = self.db.get_user_profile(itx.guild_id, assignee.id)
             embed = discord.Embed(title=f"✅ 登録: {channel.name}", color=discord.Color.green())
             msg = await channel.send(embed=embed, view=TicketControlView())
-            self.db.timers[gid][cid] = {"last_message_at": datetime.datetime.now().isoformat(), "enabled": self._get_setting(itx.guild_id, p, "notify_enabled", DEFAULT_NOTIFY_ENABLED), "timeout_hours": self._get_setting(itx.guild_id, p, "timeout_hours", DEFAULT_TIMEOUT_HOURS), "assignee_id": assignee.id, "creator_id": c_id, "active_tickets": [msg.id], "auto_close_enabled": True, "auto_close_days": self._get_setting(itx.guild_id, p, "auto_close_days", DEFAULT_AUTO_CLOSE_DAYS), "mirror_thread_id": None, "last_log_at": None}
+            self.db.timers[gid][cid] = {"last_message_at": datetime.datetime.now().isoformat(), "enabled": self._get_setting(itx.guild_id, p, "notify_enabled", DEFAULT_NOTIFY_ENABLED), "timeout_hours": self._get_setting(itx.guild_id, p, "timeout_hours", DEFAULT_TIMEOUT_HOURS), "assignee_id": assignee.id, "creator_id": c_id, "active_tickets": [msg.id], "auto_close_enabled": True, "auto_close_days": self._get_setting(itx.guild_id, p, "auto_close_days", DEFAULT_AUTO_CLOSE_DAYS), "mirror_thread_id": None, "last_log_at": None, "task_list": []}
             self.db.save_timers()
             is_new = True
         if thread_id:
@@ -1193,11 +1410,20 @@ class Tickets(commands.Cog):
                 if not dry_run: 
                     c_id = tc.id if tc else ta.id
                     p = self.db.get_user_profile(itx.guild_id, ta.id)
-                    self.db.timers[gid][cid] = {"last_message_at": datetime.datetime.now().isoformat(), "enabled": self._get_setting(itx.guild_id, p, "notify_enabled", DEFAULT_NOTIFY_ENABLED), "timeout_hours": self._get_setting(itx.guild_id, p, "timeout_hours", DEFAULT_TIMEOUT_HOURS), "assignee_id": ta.id, "creator_id": c_id, "active_tickets": [], "auto_close_enabled": True, "auto_close_days": self._get_setting(itx.guild_id, p, "auto_close_days", DEFAULT_AUTO_CLOSE_DAYS), "mirror_thread_id": None, "last_log_at": None}
+                    self.db.timers[gid][cid] = {"last_message_at": datetime.datetime.now().isoformat(), "enabled": self._get_setting(itx.guild_id, p, "notify_enabled", DEFAULT_NOTIFY_ENABLED), "timeout_hours": self._get_setting(itx.guild_id, p, "timeout_hours", DEFAULT_TIMEOUT_HOURS), "assignee_id": ta.id, "creator_id": c_id, "active_tickets": [], "auto_close_enabled": True, "auto_close_days": self._get_setting(itx.guild_id, p, "auto_close_days", DEFAULT_AUTO_CLOSE_DAYS), "mirror_thread_id": None, "last_log_at": None, "task_list": []}
                 log.append(f"✅ {ch.name}: {ta.display_name}")
         if not dry_run:
             self.db.save_timers()
         await itx.followup.send(f"🚀 復旧完了 ({recovered}件)\n" + "\n".join(log[:10]), ephemeral=True)
+
+    @admin_group.command(name="assignee", description="【管理者】担当者個別設定")
+    async def admin_assignee(self, itx: discord.Interaction, target: discord.Member, category: Optional[discord.CategoryChannel] = None, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
+        p = self.db.get_user_profile(itx.guild_id, target.id)
+        msg = self._update_settings_logic(p, is_guild=False, category=category, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
+        self.db.save_profiles()
+        await itx.response.defer(ephemeral=True)
+        embed = await self.create_assignee_detail_embed(itx.guild, target.id, target.display_name)
+        await itx.followup.send(embed=embed, view=AdminAssigneeDetailView(self, itx.guild), ephemeral=True)
 
     @my_group.command(name="setup", description="個人設定")
     async def my_setup(self, itx: discord.Interaction, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
@@ -1212,16 +1438,6 @@ class Tickets(commands.Cog):
     async def my_dash(self, itx: discord.Interaction):
         embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
         await itx.response.send_message(embed=embed, view=MyDashboardView(), ephemeral=True)
-
-    @ticket_group.command(name="override", description="【管理者】ユーザー強制変更")
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def override_cmd(self, itx: discord.Interaction, target: discord.Member, transcript: Optional[discord.ForumChannel] = None, timeout_hours: Optional[int] = None, auto_close_enabled: Optional[bool] = None, auto_close_days: Optional[int] = None, reuse_channel: Optional[bool] = None, max_slots: Optional[int] = None, cooldown: Optional[int] = None, notify_enabled: Optional[bool] = None, name_format: Optional[str] = None, mention_role: Optional[discord.Role] = None, log_role: Optional[discord.Role] = None, ignore_role: Optional[discord.Role] = None, reset_roles: bool = False):
-        p = self.db.get_user_profile(itx.guild_id, target.id)
-        msg = self._update_settings_logic(p, is_guild=False, transcript=transcript, timeout_hours=timeout_hours, auto_close_enabled=auto_close_enabled, auto_close_days=auto_close_days, reuse_channel=reuse_channel, max_slots=max_slots, cooldown=cooldown, notify_enabled=notify_enabled, name_format=name_format, mention_role=mention_role, log_role=log_role, ignore_role=ignore_role, reset_roles=reset_roles)
-        self.db.save_profiles()
-        await itx.response.defer(ephemeral=True)
-        embed = await self.create_assignee_detail_embed(itx.guild, target.id, target.display_name)
-        await itx.followup.send(embed=embed, view=AdminStaffDetailView(self, itx.guild), ephemeral=True)
 
     @attr_group.command(name="set", description="属性設定")
     async def attr_set(self, itx: discord.Interaction, user: discord.Member, key: str, value: int):
@@ -1254,8 +1470,3 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
-
-
-
-
-
