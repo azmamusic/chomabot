@@ -300,11 +300,17 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
                     "name": name,
                     "completed": status_map.get(name, False)
                 })
+
+            # 以前のリストが空（0件）だった場合のみ「初回作成」と判定する
+            is_first_creation = (len(old_list) == 0 and len(new_list) > 0)
             
             cog.db.timers[gid][cid]["tasks"][str(self.ticket_msg_id)] = new_list
             cog.db.save_timers()
 
-            await cog.log_to_forum(self.target_channel, content="📝 **タスクリストが更新されました**", target_msg_id=self.ticket_msg_id)
+            # 初回作成時のみ、フォーラムに Embed 形式でログを送信（is_update=True でチャットのクールダウンを貫通させる）
+            if is_first_creation:
+                log_embed = discord.Embed(title="📝 タスクリストが作成されました", color=discord.Color.green())
+                await cog.log_to_forum(self.target_channel, embed=log_embed, target_msg_id=self.ticket_msg_id, is_update=True)
             
             if self.is_from_forum_panel:
                 embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
@@ -315,7 +321,11 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
                 embed.description = desc or "タスクなし"
                 await itx.response.edit_message(embed=embed, view=TaskActionView(self.target_channel, self.ticket_msg_id, new_list))
             else:
-                await itx.response.send_message(f"✅ タスクリストを更新しました ({len(new_list)}件)", ephemeral=True)
+                msg_text = f"✅ タスクリストを更新しました ({len(new_list)}件):\n"
+                for t in new_list:
+                    mark = "✅" if t["completed"] else "☑️"
+                    msg_text += f"{mark} {t['name']}\n"
+                await itx.response.send_message(msg_text, ephemeral=True)
         else:
             await itx.response.send_message("⚠️ チケットデータが見つかりません。", ephemeral=True)
 
@@ -370,7 +380,7 @@ class ForumTaskLogView(discord.ui.View):
              return
 
         embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
-        desc = ""
+        desc = "**【操作ログ: 📝 リストを更新しました】**\n\n"
         for t in task_list:
             mark = "✅" if t["completed"] else "☑️"
             desc += f"{mark} {t['name']}\n"
@@ -1532,5 +1542,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
