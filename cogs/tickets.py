@@ -329,37 +329,42 @@ class ForumTaskLogView(discord.ui.View):
         gid = str(itx.guild_id)
         cid = None
         target_data = None
+        target_channel = None
+
+        # 検索に時間がかかる可能性があるため、先にdeferする
+        await itx.response.defer(ephemeral=True)
         
         # Search timers for matching mirror_thread_id
         if gid in cog.db.timers:
-            for ch_id, data in cog.db.timers[gid].items():
+            for ch_id, data in list(cog.db.timers[gid].items()):
                 if data.get("mirror_thread_id") == itx.channel.id:
-                    cid = ch_id
-                    target_data = data
-                    break
-        
-        if not cid:
-            await itx.response.send_message("⚠️ このスレッドに関連付けられたチケットが見つかりません。", ephemeral=True)
-            return
+                    ch = itx.guild.get_channel(int(ch_id))
+                    if not ch:
+                        try:
+                            ch = await itx.guild.fetch_channel(int(ch_id))
+                        except discord.NotFound:
+                            continue # 削除されたゴーストデータならスキップして次を探す
+                            
+                    if ch:
+                        target_channel = ch
+                        target_data = data
+                        cid = ch_id
+                        break
 
-        target_channel = itx.guild.get_channel(int(cid))
         if not target_channel:
-            try:
-                target_channel = await itx.guild.fetch_channel(int(cid))
-            except discord.NotFound:
-                await itx.response.send_message("⚠️ 元のチケットチャンネルが見つかりません（既に削除されている可能性があります）。", ephemeral=True)
-                return
+            await itx.followup.send("⚠️ このスレッドに関連付けられたチケット（チャンネル）が見つかりません。", ephemeral=True)
+            return
 
         active_tickets = target_data.get("active_tickets", [])
         if not active_tickets:
-             await itx.response.send_message("⚠️ 稼働中のチケットがありません。", ephemeral=True)
+             await itx.followup.send("⚠️ 稼働中のチケットがありません。", ephemeral=True)
              return
              
         ticket_msg_id = active_tickets[-1]
         task_list = target_data.get("tasks", {}).get(str(ticket_msg_id), [])
         
         if not task_list:
-             await itx.response.send_message("✅ 全てのタスクが完了しているか、タスクがありません。", ephemeral=True)
+             await itx.followup.send("✅ 全てのタスクが完了しているか、タスクがありません。", ephemeral=True)
              return
 
         embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
@@ -369,7 +374,7 @@ class ForumTaskLogView(discord.ui.View):
             desc += f"{mark} {t['name']}\n"
         embed.description = desc or "タスクなし"
 
-        await itx.response.send_message(embed=embed, view=TaskActionView(target_channel, ticket_msg_id, task_list), ephemeral=True)
+        await itx.followup.send(embed=embed, view=TaskActionView(target_channel, ticket_msg_id, task_list), ephemeral=True)
 
 class TaskActionView(discord.ui.View):
     def __init__(self, target_channel, ticket_msg_id, task_list):
@@ -457,9 +462,16 @@ class AssigneeCloseView(discord.ui.View):
     async def delete_ch(self, itx: discord.Interaction, button: discord.ui.Button):
         cog = itx.client.get_cog("Tickets")
         await cog.log_to_forum(self.target_channel, content="🗑️ 手動削除されました。", close_thread=True)
+        gid, cid = str(itx.guild_id), str(self.target_channel.id)
+        if cid in cog.db.timers.get(gid, {}):
+            del cog.db.timers[gid][cid]
+            cog.db.save_timers()
         await itx.response.send_message("削除します...", ephemeral=True)
         await asyncio.sleep(2)
-        await self.target_channel.delete()
+        try:
+            await self.target_channel.delete()
+        except discord.NotFound:
+            pass
 
 class TaskForceCloseView(discord.ui.View):
     def __init__(self, target_channel, ticket_msg_id):
@@ -639,6 +651,9 @@ class AutoCloseConfirmView(discord.ui.View):
         ch = itx.guild.get_channel(int(cid))
         if ch: 
             await cog.log_to_forum(ch, content="🗑️ 自動削除を実行しました。", close_thread=True)
+                if cid in cog.db.timers.get(gid, {}): 
+                    del cog.db.timers[gid][cid]
+                    cog.db.save_timers()
             await ch.delete()
         else:
             if cid in cog.db.timers.get(gid, {}): 
@@ -1515,5 +1530,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
