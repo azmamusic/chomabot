@@ -1,0 +1,25 @@
+# .github/workflows/auto-deploy.yml
+name: Deploy Development Bot
+
+on:
+  push:
+    branches:
+      - dev  # devブランチにpushされた時だけ動く
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute remote ssh commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.GCE_HOST }}          # GCEのIPアドレス
+          username: ${{ secrets.GCE_USER }}      # ログインユーザー名
+          key: ${{ secrets.GCE_SSH_KEY }}        # SSH秘密鍵
+          port: 22
+          script: |
+            cd /home/azma_vocal/dev
+            git pull origin dev
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart dev
