@@ -256,16 +256,17 @@ class AssigneeMenuView(discord.ui.View):
         t_data = cog.db.timers.get(gid, {}).get(cid, {})
         current_tasks = t_data.get("task_list", [])
         text_val = "\n".join([t["name"] for t in current_tasks])
-        await itx.response.send_modal(TaskListEditModal(self.target_channel, text_val))
+        await itx.response.send_modal(TaskListEditModal(self.target_channel, text_val, is_from_forum_panel=False))
 
     @discord.ui.button(label="✅ 完了/クローズ", style=discord.ButtonStyle.danger, row=1)
     async def close(self, itx: discord.Interaction, button: discord.ui.Button):
         await itx.response.send_message("処理を選択:", view=AssigneeCloseView(self.target_channel), ephemeral=True)
 
 class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
-    def __init__(self, target_channel, current_text=""):
+    def __init__(self, target_channel, current_text="", is_from_forum_panel=False):
         super().__init__()
         self.target_channel = target_channel
+        self.is_from_forum_panel = is_from_forum_panel
         default_tasks="受領確認・請求書提出\nボーカルエディット\nミックス\nマスタリング\n音源提出\nリテイク対応\nMUX"
         self.input_text = discord.ui.TextInput(
             label="タスク (改行またはカンマ区切り)",
@@ -300,7 +301,17 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
             cog.db.save_timers()
             
             await cog.log_to_forum(self.target_channel, content=f"📋 タスクリストが更新されました。")
-            await itx.response.send_message(f"✅ タスクリストを更新しました ({len(new_list)}件)", ephemeral=True)
+            
+            if self.is_from_forum_panel:
+                embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
+                desc = ""
+                for t in new_list:
+                    mark = "✅" if t["completed"] else "☑️"
+                    desc += f"{mark} {t['name']}\n"
+                embed.description = desc or "タスクなし"
+                await itx.response.edit_message(embed=embed, view=TaskActionView(self.target_channel, new_list))
+            else:
+                await itx.response.send_message(f"✅ タスクリストを更新しました ({len(new_list)}件)", ephemeral=True)
         else:
             await itx.response.send_message("⚠️ チケットデータが見つかりません。", ephemeral=True)
 
@@ -388,13 +399,22 @@ class TaskActionView(discord.ui.View):
             
             # System log to forum
             await cog.log_to_forum(self.target_channel, content=f"✅ タスク **『{target_name}』** が完了しました。")
-            await itx.response.send_message(f"✅ タスク『{target_name}』を完了しました。", ephemeral=True)
+            
+            # パネルをその場で更新
+            embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
+            desc = ""
+            for t in tasks:
+                mark = "✅" if t["completed"] else "☑️"
+                desc += f"{mark} {t['name']}\n"
+            embed.description = desc or "タスクなし"
+            
+            await itx.response.edit_message(embed=embed, view=TaskActionView(self.target_channel, tasks))
         else:
             await itx.response.send_message("⚠️ エラー: データ不整合", ephemeral=True)
 
     async def edit_list(self, itx: discord.Interaction):
         current_text = "\n".join([t["name"] for t in self.task_list])
-        await itx.response.send_modal(TaskListEditModal(self.target_channel, current_text))
+        await itx.response.send_modal(TaskListEditModal(self.target_channel, current_text, is_from_forum_panel=True))
 
 class AssigneeCloseView(discord.ui.View):
     def __init__(self, target_channel):
@@ -1470,5 +1490,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
