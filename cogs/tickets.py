@@ -306,7 +306,7 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
             
             if self.is_from_forum_panel:
                 embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
-                desc = "**【操作ログ: 📝 リストを更新しました】**\n\n"
+                desc = ""
                 for t in new_list:
                     mark = "✅" if t["completed"] else "☑️"
                     desc += f"{mark} {t['name']}\n"
@@ -1515,4 +1515,5 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
