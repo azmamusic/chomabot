@@ -159,9 +159,9 @@ class ContractModal(discord.ui.Modal, title="依頼内容 (1/2: 契約情報)"):
         self.assignee = assignee
         self.t_name = discord.ui.TextInput(label="依頼者名義", max_length=50)
         self.t_title = discord.ui.TextInput(label="楽曲タイトル", max_length=100)
-        self.t_type = discord.ui.TextInput(label="依頼形態", placeholder="Mix, Mastering...", max_length=50)
+        self.t_type = discord.ui.TextInput(label="依頼形態", placeholder="ボーカルエディット、ミックス、マスタリング、etc", max_length=50)
         self.t_deadline = discord.ui.TextInput(label="希望納期", max_length=50)
-        self.t_budget = discord.ui.TextInput(label="予算", required=False, max_length=50)
+        self.t_budget = discord.ui.TextInput(label="予算", required=False, placeholder="「未定」「見積もり」等可", max_length=50)
         for i in [self.t_name, self.t_title, self.t_type, self.t_deadline, self.t_budget]:
             self.add_item(i)
 
@@ -271,7 +271,7 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
             style=discord.TextStyle.paragraph,
             default=current_text,
             required=False,
-            placeholder="Mix提出\nリテイク対応\nマスタリング"
+            value="受領確認・請求書提出\nボーカルエディット\nミックス\nマスタリング\n音源提出\nリテイク対応\nMUX"
         )
         self.add_item(self.input_text)
 
@@ -1470,3 +1470,4 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
