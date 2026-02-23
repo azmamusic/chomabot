@@ -227,7 +227,7 @@ class TicketControlView(discord.ui.View):
         cog = itx.client.get_cog("Tickets")
         t_data = cog.db.timers.get(str(itx.guild_id), {}).get(str(itx.channel.id), {})
         is_assignee = t_data.get("assignee_id") == itx.user.id
-        is_admin = itx.user.guild_permissions.manage_channels
+        is_admin = itx.user.guild_permissions.manage_roles
         if not (is_assignee or is_admin):
             await itx.response.send_message("担当者のみ使用可能です。", ephemeral=True)
             return
@@ -1530,7 +1530,3 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
-
-
-
-
