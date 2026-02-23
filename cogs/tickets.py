@@ -386,7 +386,7 @@ class TaskActionView(discord.ui.View):
         # Check for uncompleted tasks
         self.next_task = next((t for t in task_list if not t["completed"]), None)
         
-        btn_label = f"▶️ 次を完了: {self.next_task['name']}" if self.next_task else "🎉 全て完了"
+        btn_label = f"▶️ タスクを進行する" if self.next_task else "🎉 全て完了"
         btn_style = discord.ButtonStyle.success if self.next_task else discord.ButtonStyle.secondary
         btn_disabled = self.next_task is None
         
@@ -1530,3 +1530,4 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
