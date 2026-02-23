@@ -380,7 +380,7 @@ class ForumTaskLogView(discord.ui.View):
              return
 
         embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
-        desc = "**【操作ログ: 📝 リストを更新しました】**\n\n"
+        desc = f"**【操作ログ: ✅ 『{target_name}』を完了しました】**\n\n"
         for t in task_list:
             mark = "✅" if t["completed"] else "☑️"
             desc += f"{mark} {t['name']}\n"
@@ -1542,6 +1542,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
