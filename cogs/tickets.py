@@ -651,9 +651,9 @@ class AutoCloseConfirmView(discord.ui.View):
         ch = itx.guild.get_channel(int(cid))
         if ch: 
             await cog.log_to_forum(ch, content="🗑️ 自動削除を実行しました。", close_thread=True)
-                if cid in cog.db.timers.get(gid, {}): 
-                    del cog.db.timers[gid][cid]
-                    cog.db.save_timers()
+            if cid in cog.db.timers.get(gid, {}): 
+                del cog.db.timers[gid][cid]
+                cog.db.save_timers()
             await ch.delete()
         else:
             if cid in cog.db.timers.get(gid, {}): 
@@ -1530,6 +1530,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
