@@ -1,0 +1,25 @@
+name: Develop auto-deploy
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.GCE_HOST }}
+          username: ${{ secrets.GCE_USER }}
+          key: ${{ secrets.GCE_SSH_KEY }}
+          port: 22
+          script: |
+            cd /home/azma_vocal/dev
+            git pull origin dev
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart dev_chomabot
+            sudo systemctl status dev_chomabot -l

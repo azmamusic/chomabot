@@ -1,0 +1,25 @@
+name: Production auto-deploy
+
+on:
+  push:
+    branches:
+      - master  # masterブランチにpushされたときだけ動く
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and Deploy to Production
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.GCE_HOST }}
+          username: ${{ secrets.GCE_USER }}
+          key: ${{ secrets.GCE_SSH_KEY }}
+          port: 22
+          script: |
+            cd /home/azma_vocal/chomabot
+            git pull origin master
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart chomabot
+            sudo systemctl status chomabot -l
