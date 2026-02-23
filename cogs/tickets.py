@@ -314,7 +314,7 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
             
             if self.is_from_forum_panel:
                 embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
-                desc = f"**【操作ログ: ✅ 『{target_name}』を完了しました】**\n\n"
+                desc = "**【操作ログ: 📝 リストを更新しました】**\n\n" # 🟢正しくはこちら
                 for t in new_list:
                     mark = "✅" if t["completed"] else "☑️"
                     desc += f"{mark} {t['name']}\n"
@@ -431,7 +431,7 @@ class TaskActionView(discord.ui.View):
             cog.db.save_timers()
             
             embed = discord.Embed(title="📋 タスク操作パネル", color=discord.Color.blue())
-            desc = ""
+            desc = f"**【操作ログ: ✅ 『{target_name}』を完了しました】**\n\n"
             for t in tasks:
                 mark = "✅" if t["completed"] else "☑️"
                 desc += f"{mark} {t['name']}\n"
@@ -1542,6 +1542,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
