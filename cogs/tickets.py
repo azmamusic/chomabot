@@ -266,12 +266,12 @@ class TaskListEditModal(discord.ui.Modal, title="タスクリスト編集"):
     def __init__(self, target_channel, current_text=""):
         super().__init__()
         self.target_channel = target_channel
+        default_tasks="受領確認・請求書提出\nボーカルエディット\nミックス\nマスタリング\n音源提出\nリテイク対応\nMUX"
         self.input_text = discord.ui.TextInput(
             label="タスク (改行またはカンマ区切り)",
             style=discord.TextStyle.paragraph,
-            default=current_text,
+            default=current_text or default_tasks,
             required=False,
-            value="受領確認・請求書提出\nボーカルエディット\nミックス\nマスタリング\n音源提出\nリテイク対応\nMUX"
         )
         self.add_item(self.input_text)
 
@@ -1470,4 +1470,5 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
