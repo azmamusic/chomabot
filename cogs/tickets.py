@@ -453,6 +453,8 @@ class AssigneeCloseView(discord.ui.View):
 
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         gid, cid = str(itx.guild_id), str(self.target_channel.id)
         
@@ -464,21 +466,23 @@ class AssigneeCloseView(discord.ui.View):
             if uncompleted:
                 embed = discord.Embed(title="⚠️ 未完了のタスクがあります", description="以下のタスクが残っています。強制的に完了しますか？", color=discord.Color.orange())
                 embed.add_field(name="残タスク", value="\n".join([f"・{n}" for n in uncompleted]))
-                await itx.response.send_message(embed=embed, view=TaskForceCloseView(self.target_channel, self.ticket_msg_id), ephemeral=True)
+                await itx.followup.send(embed=embed, view=TaskForceCloseView(self.target_channel, self.ticket_msg_id), ephemeral=True)
                 return
 
         await cog.close_ticket(self.target_channel, itx.user, self.ticket_msg_id)
-        await itx.response.send_message("✅ 完了しました。", ephemeral=True)
+        await itx.followup.send("✅ 完了しました。", ephemeral=True)
 
     @discord.ui.button(label="チャンネル削除", style=discord.ButtonStyle.danger)
     async def delete_ch(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         await cog.log_to_forum(self.target_channel, content="🗑️ 手動削除されました。", close_thread=True)
         gid, cid = str(itx.guild_id), str(self.target_channel.id)
         if cid in cog.db.timers.get(gid, {}):
             del cog.db.timers[gid][cid]
             cog.db.save_timers()
-        await itx.response.send_message("削除します...", ephemeral=True)
+        await itx.followup.send("削除します...", ephemeral=True)
         await asyncio.sleep(2)
         try:
             await self.target_channel.delete()
@@ -493,9 +497,11 @@ class TaskForceCloseView(discord.ui.View):
 
     @discord.ui.button(label="⚠️ 強制クローズ", style=discord.ButtonStyle.danger)
     async def force_close(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         await cog.close_ticket(self.target_channel, itx.user, self.ticket_msg_id)
-        await itx.response.send_message("✅ 強制完了しました。", ephemeral=True)
+        await itx.followup.send("✅ 強制完了しました。", ephemeral=True)
 
     @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
     async def cancel(self, itx: discord.Interaction, button: discord.ui.Button):
@@ -585,7 +591,7 @@ class TimerEditModal(discord.ui.Modal, title="タイマー設定"):
         cog = itx.client.get_cog("Tickets")
         gid, cid = str(itx.guild_id), str(self.target_channel.id)
         if cid in cog.db.timers.get(gid, {}):
-            cog.db.timers[gid][cid].update({"timeout_hours": h, "auto_close_days": d, "last_message_at": datetime.datetime.now().isoformat(), "reminded": False})
+            cog.db.timers[gid][cid].update({"timeout_hours": h, "auto_close_days": d, "last_message_at": datetime.datetime.now().isoformat(), "reminded": False, "enabled": True})
             cog.db.save_timers()
             await itx.response.send_message("✅ 設定更新＆タイマー再開", ephemeral=True)
 
@@ -672,7 +678,7 @@ class AutoCloseConfirmView(discord.ui.View):
                 del cog.db.timers[gid][cid]
                 cog.db.save_timers()
 
-    @discord.ui.button(label="延長 (まだ使う)", style=discord.ButtonStyle.success, custom_id="ac_ext")
+    @discord.ui.button(label="延長", style=discord.ButtonStyle.success, custom_id="ac_ext")
     async def extend(self, itx: discord.Interaction, btn: discord.ui.Button): 
         cid = str(itx.channel.id)
         gid = str(itx.guild_id)
@@ -683,12 +689,23 @@ class AutoCloseConfirmView(discord.ui.View):
         await itx.message.delete()
         await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
 
+    @discord.ui.button(label="一時停止", style=discord.ButtonStyle.secondary, custom_id="ac_pause")
+    async def pause(self, itx: discord.Interaction, btn: discord.ui.Button):
+        cid = str(itx.channel.id)
+        gid = str(itx.guild_id)
+        cog = itx.client.get_cog("Tickets")
+        if cid in cog.db.timers.get(gid, {}): 
+            cog.db.timers[gid][cid].update({"enabled": False, "close_confirming": False})
+            cog.db.save_timers()
+        await itx.message.delete()
+        await itx.response.send_message(f"⏸️ タイマーを一時停止しました。（再開するにはチャンネルでメッセージを送信してください）", ephemeral=True)
+
 @persistent_view
 class ReminderView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="確認 (タイマー延長)", style=discord.ButtonStyle.primary, custom_id="rem_ext")
+    @discord.ui.button(label="延長", style=discord.ButtonStyle.primary, custom_id="rem_ext")
     async def extend(self, itx: discord.Interaction, btn: discord.ui.Button):
         cid = str(itx.channel.id)
         gid = str(itx.guild_id)
@@ -698,6 +715,17 @@ class ReminderView(discord.ui.View):
             cog.db.save_timers()
         await itx.message.delete()
         await itx.response.send_message(f"✅ タイマーを延長しました。", ephemeral=True)
+
+    @discord.ui.button(label="一時停止", style=discord.ButtonStyle.secondary, custom_id="rem_pause")
+    async def pause(self, itx: discord.Interaction, btn: discord.ui.Button):
+        cid = str(itx.channel.id)
+        gid = str(itx.guild_id)
+        cog = itx.client.get_cog("Tickets")
+        if cid in cog.db.timers.get(gid, {}): 
+            cog.db.timers[gid][cid].update({"enabled": False, "reminded": False})
+            cog.db.save_timers()
+        await itx.message.delete()
+        await itx.response.send_message(f"⏸️ タイマーを一時停止しました。（再開するにはチャンネルでメッセージを送信してください）", ephemeral=True)
 
 @persistent_view
 class ReopenView(discord.ui.View):
@@ -1163,7 +1191,7 @@ class Tickets(commands.Cog):
             return
         gid, cid = str(message.guild.id), str(message.channel.id)
         if cid in self.db.timers.get(gid, {}):
-            self.db.timers[gid][cid].update({"last_message_at": datetime.datetime.now().isoformat(), "reminded": False, "close_confirming": False})
+            self.db.timers[gid][cid].update({"last_message_at": datetime.datetime.now().isoformat(), "reminded": False, "close_confirming": False, "enabled": True})
             self.db.save_timers()
             
             g_conf = self.db.get_guild_config(message.guild.id)
@@ -1374,7 +1402,9 @@ class Tickets(commands.Cog):
         delta = datetime.datetime.now() - last
         embed = discord.Embed(title=f"⏱️ Manager: {channel.name}", color=discord.Color.light_grey())
         status = "✅ 稼働中"
-        if t_data.get("reminded"):
+        if not t_data.get("enabled", True):
+            status = "⏸️ 一時停止中"
+        elif t_data.get("reminded"):
             status = "⏰ 通知済み"
         embed.add_field(name="Status", value=status, inline=True)
         embed.add_field(name="Setting", value=f"Limit: {t_data.get('timeout_hours')}h", inline=True)
@@ -1404,23 +1434,6 @@ class Tickets(commands.Cog):
     async def admin_dash(self, itx: discord.Interaction):
         embed = await self.create_admin_dashboard_embed(itx.guild)
         await itx.response.send_message(embed=embed, view=AdminDashboardView(self, itx.guild), ephemeral=True)
-
-    @admin_group.command(name="manage", description="指定したチケットの管理メニューを呼び出します")
-    async def admin_manage(self, itx: discord.Interaction, channel: Optional[discord.TextChannel] = None):
-        target_channel = channel or itx.channel
-        gid, cid = str(itx.guild_id), str(target_channel.id)
-        if cid not in self.db.timers.get(gid, {}):
-            await itx.response.send_message(f"⚠️ {target_channel.mention} はチケットとして登録されていません。", ephemeral=True)
-            return
-        t_data = self.db.timers[gid][cid]
-        active_tickets = t_data.get("active_tickets", [])
-        if not active_tickets:
-            await itx.response.send_message("⚠️ このチャンネルに稼働中のチケットがありません。", ephemeral=True)
-            return
-            
-        ticket_msg_id = active_tickets[-1]
-        embed = await self.create_ticket_dashboard_embed(target_channel, t_data)
-        await itx.response.send_message(embed=embed, view=AssigneeMenuView(target_channel, ticket_msg_id), ephemeral=True)
 
     @admin_group.command(name="link", description="チケット紐付け")
     async def admin_link(self, itx: discord.Interaction, channel: discord.TextChannel, thread_id: Optional[str] = None, create_thread: bool = False, assignee: Optional[discord.Member] = None, creator: Optional[discord.Member] = None):
@@ -1517,6 +1530,31 @@ class Tickets(commands.Cog):
         embed = await self.create_my_dashboard_embed(itx.guild, itx.user)
         await itx.response.send_message(embed=embed, view=MyDashboardView(), ephemeral=True)
 
+    @my_group.command(name="manage", description="指定したチケットの管理メニューを呼び出します")
+    async def my_manage(self, itx: discord.Interaction, channel: Optional[discord.TextChannel] = None):
+        target_channel = channel or itx.channel
+        gid, cid = str(itx.guild_id), str(target_channel.id)
+        if cid not in self.db.timers.get(gid, {}):
+            await itx.response.send_message(f"⚠️ {target_channel.mention} はチケットとして登録されていません。", ephemeral=True)
+            return
+        t_data = self.db.timers[gid][cid]
+        
+        is_assignee = t_data.get("assignee_id") == itx.user.id
+        is_admin = itx.user.guild_permissions.manage_roles
+        if not (is_assignee or is_admin):
+            await itx.response.send_message("担当者または管理者のみ使用可能です。", ephemeral=True)
+            return
+
+        active_tickets = t_data.get("active_tickets", [])
+        if not active_tickets:
+            await itx.response.send_message("⚠️ このチャンネルに稼働中のチケットがありません。", ephemeral=True)
+            return
+            
+        ticket_msg_id = active_tickets[-1]
+        
+        embed = await self.create_ticket_dashboard_embed(target_channel, t_data)
+        await itx.response.send_message(embed=embed, view=AssigneeMenuView(target_channel, ticket_msg_id), ephemeral=True)
+
     @attr_group.command(name="set", description="属性設定")
     async def attr_set(self, itx: discord.Interaction, user: discord.Member, key: str, value: int):
         g = self.db.get_guild_config(itx.guild_id)
@@ -1548,6 +1586,8 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
+
 
 
 
