@@ -908,10 +908,10 @@ class Tickets(commands.Cog):
         p = self.db.get_user_profile(guild.id, assignee.id)
         g_conf = self.db.get_guild_config(guild.id)
         
-        cat_id = p.get("category_id") or g_conf.get("category_id")
+        cat_id = p.get("category_id")
         
-        # テンプレートの展開処理
-        tmpl = p.get("template") or g_conf.get("template")
+        # 外部誘導モードの場合は個別テンプレートのみを参照し、通常モードはデフォルト設定へフォールバック
+        tmpl = p.get("template") if not cat_id else (p.get("template") or g_conf.get("template"))
         formatted_tmpl = None
         if tmpl:
             formatted_tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n")
@@ -1611,6 +1611,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
