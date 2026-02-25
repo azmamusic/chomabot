@@ -839,7 +839,7 @@ class Tickets(commands.Cog):
         if current_user_tickets >= max_s:
             return f"⛔ あなたは既に {current_user_tickets}件 依頼中です。(上限: {max_s}件)"
         return None
-
+            
         # ▼ 個別カテゴリが未設定の場合は、モーダルを出さずに外部誘導用テンプレートを返す
         if not p.get("category_id"):
             tmpl = p.get("template")
@@ -937,11 +937,12 @@ class Tickets(commands.Cog):
         p = self.db.get_user_profile(guild.id, assignee.id)
         g_conf = self.db.get_guild_config(guild.id)
         
-        tmpl = p.get("template") or g_conf.get("template")
-        formatted_tmpl = None
+        # テンプレートの展開処理
+        tmpl = p.get("template") or self.db.get_guild_config(guild.id).get("template")
+        desc_head = ""
         if tmpl:
-            formatted_tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n")
-            
+            tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n")            
+
             def channel_replacer(match):
                 query = match.group(1)
                 parts = [pt.strip() for pt in query.split(':')]
@@ -952,19 +953,24 @@ class Tickets(commands.Cog):
                 elif len(parts) == 2:
                     p1, p2 = parts[0].lower(), parts[1].lower()
                     cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == p1, guild.categories)
-                    if cat: target = discord.utils.find(lambda c: c.name.lower() == p2, cat.channels)
+                    if cat:
+                        target = discord.utils.find(lambda c: c.name.lower() == p2, cat.channels)
                     if not target:
                         ch = discord.utils.find(lambda c: c.name.lower() == p1, guild.channels)
-                        if ch and hasattr(ch, 'threads'): target = discord.utils.find(lambda t: t.name.lower() == p2, ch.threads)
+                        if ch and hasattr(ch, 'threads'):
+                            target = discord.utils.find(lambda t: t.name.lower() == p2, ch.threads)
                 elif len(parts) >= 3:
                     cat_name, ch_name, th_name = parts[0].lower(), parts[1].lower(), parts[2].lower()
                     cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == cat_name, guild.categories)
                     if cat:
                         ch = discord.utils.find(lambda c: c.name.lower() == ch_name, cat.channels)
-                        if ch and hasattr(ch, 'threads'): target = discord.utils.find(lambda t: t.name.lower() == th_name, ch.threads)
+                        if ch and hasattr(ch, 'threads'):
+                            target = discord.utils.find(lambda t: t.name.lower() == th_name, ch.threads)
+
                 return target.mention if target else match.group(0)
 
-            formatted_tmpl = re.sub(r"\{(?:channel|thread):(.*?)\}", channel_replacer, formatted_tmpl)
+            tmpl = re.sub(r"\{(?:channel|thread):(.*?)\}", channel_replacer, tmpl)
+            desc_head = tmpl + "\n\n"
 
         reuse = self._get_setting(guild.id, p, "reuse_channel", DEFAULT_REUSE_CHANNEL)
         target_channel = None
@@ -988,7 +994,6 @@ class Tickets(commands.Cog):
             if r and r.mention not in mentions:
                 mentions.append(r.mention)
 
-        desc_head = formatted_tmpl + "\n\n" if formatted_tmpl else ""
         embed = discord.Embed(title=f"案件: {title}", description=f"{desc_head}担当: {assignee.mention}", color=discord.Color.blue(), timestamp=datetime.datetime.now())
         embed.add_field(name="👤 依頼者", value=f"{creator.mention}\n(名義: **{creator_name}**)", inline=True)
         embed.add_field(name="📋 依頼形態", value=c_type, inline=True)
