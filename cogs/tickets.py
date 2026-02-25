@@ -150,6 +150,20 @@ class AssigneeSelectView(discord.ui.View):
         err = cog.check_accept_status(itx.guild, target, itx.user)
         if err:
             await itx.response.send_message(err, ephemeral=True)
+            return
+
+        # ユーザー固有（custom）のカテゴリが設定されているか確認
+        p = cog.db.get_user_profile(itx.guild.id, target.id)
+        custom_category_id = p.get("category_id")
+        
+        if not custom_category_id:
+            # 固有のカテゴリがない場合は、チケット作成用モーダルを開かずにメッセージを返す
+            tmpl = p.get("template")
+            if tmpl:
+                msg_content = tmpl.replace("{creator}", itx.user.mention).replace("{user}", itx.user.mention).replace("{assignee}", target.mention).replace("\\n", "\n")
+            else:
+                msg_content = f"{target.display_name} は本サーバー内での依頼対応を行っておりません。個別にお問い合わせください。"
+            await itx.response.send_message(msg_content, ephemeral=True)
         else:
             await itx.response.send_modal(ContractModal(target))
 
@@ -1604,13 +1618,5 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
-
-
-
-
-
-
-
-
 
 
