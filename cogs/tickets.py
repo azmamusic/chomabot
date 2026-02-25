@@ -148,24 +148,40 @@ class AssigneeSelectView(discord.ui.View):
             return
         cog = itx.client.get_cog("Tickets")
         err = cog.check_accept_status(itx.guild, target, itx.user)
-        if err:
+
+        # 休憩中（受付停止）のステータスは、外部対応であっても最優先で尊重する
+        if err and "休憩中" in err:
             await itx.response.send_message(err, ephemeral=True)
             return
+
+        g_conf = cog.db.get_guild_config(itx.guild.id)
+        q_rid = g_conf.get("assignee_qual_role_id")
+        q_role = itx.guild.get_role(q_rid) if q_rid else None
+        
+        # 資格ロールが設定されており、かつ対象者がそのロールを持っているか
+        has_qual_role = bool(q_role and q_role in target.roles)
 
         # ユーザー固有（custom）のカテゴリが設定されているか確認
         p = cog.db.get_user_profile(itx.guild.id, target.id)
         custom_category_id = p.get("category_id")
-        
-        if not custom_category_id:
-            # 固有のカテゴリがない場合は、チケット作成用モーダルを開かずにメッセージを返す
+
+        # 「資格ロールがあり、個別のカテゴリを持っていない場合」のみ ephemeral を出す
+        if has_qual_role and not custom_category_id:
             tmpl = p.get("template")
             if tmpl:
                 msg_content = tmpl.replace("{creator}", itx.user.mention).replace("{user}", itx.user.mention).replace("{assignee}", target.mention).replace("\\n", "\n")
             else:
                 msg_content = f"{target.display_name} は本サーバー内での依頼対応を行っておりません。個別にお問い合わせください。"
             await itx.response.send_message(msg_content, ephemeral=True)
-        else:
-            await itx.response.send_modal(ContractModal(target))
+            return
+
+        # それ以外（資格ロールを使わずに運用している場合や、BL・上限などの他のエラーがある場合）
+        if err:
+            await itx.response.send_message(err, ephemeral=True)
+            return
+
+        # すべての条件をクリアした場合のみモーダルを開く
+        await itx.response.send_modal(ContractModal(target))
 
 class ContractModal(discord.ui.Modal, title="依頼内容 (1/2: 契約情報)"):
     def __init__(self, assignee: discord.Member):
@@ -1618,5 +1634,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
