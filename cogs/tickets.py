@@ -639,7 +639,7 @@ class ProfileTemplateModal(discord.ui.Modal, title="テンプレート編集"):
     async def on_submit(self, itx): 
         cog = itx.client.get_cog("Tickets")
         p = cog.db.get_user_profile(itx.guild_id, itx.user.id)
-        p["template"] = cog.resolve_mentions(itx.guild, self.c.value)
+        p["template"] = self.c.value
         cog.db.save_profiles()
         await itx.response.send_message("更新しました", ephemeral=True)
 
@@ -652,7 +652,7 @@ class GlobalTemplateModal(discord.ui.Modal, title="共通テンプレート編�
     async def on_submit(self, itx): 
         cog = itx.client.get_cog("Tickets")
         g = cog.db.get_guild_config(itx.guild_id)
-        g["template"] = cog.resolve_mentions(itx.guild, self.c.value)
+        g["template"] = self.c.value
         cog.db.save_profiles()
         await itx.response.send_message("更新しました", ephemeral=True)
 
@@ -767,20 +767,6 @@ class Tickets(commands.Cog):
     @tasks.loop(seconds=60)
     async def autosave_loop(self):
         self.db.flush()
-
-    def resolve_mentions(self, guild: discord.Guild, text: str) -> Optional[str]:
-        if not text:
-            return None
-        def replacer(match):
-            symbol, name = match.group(1), match.group(2)
-            if symbol == "#":
-                ch = discord.utils.find(lambda c: c.name.lower() == name.lower(), guild.text_channels)
-                return ch.mention if ch else match.group(0)
-            elif symbol == "@":
-                role = discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
-                return role.mention if role else match.group(0)
-            return match.group(0)
-        return re.sub(r"([#@])([^\s　]+)", replacer, text)
 
     def get_assignee_options(self, guild: discord.Guild, sort_key: str = None) -> List[discord.SelectOption]:
         g_conf = self.db.get_guild_config(guild.id)
@@ -944,7 +930,39 @@ class Tickets(commands.Cog):
         tmpl = p.get("template") or self.db.get_guild_config(guild.id).get("template")
         desc_head = ""
         if tmpl:
-            desc_head = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n") + "\n\n"
+            tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n")
+            
+            # {channel: xxx} または {thread: xxx} の動的探索機能
+            def channel_replacer(match):
+                query = match.group(1)
+                parts = [pt.strip() for pt in query.split(':')]
+                target = None
+                
+                if len(parts) == 1:
+                    name = parts[0].lower()
+                    target = discord.utils.find(lambda c: c.name.lower() == name, guild.channels) or \
+                             discord.utils.find(lambda t: t.name.lower() == name, guild.threads)
+                elif len(parts) == 2:
+                    p1, p2 = parts[0].lower(), parts[1].lower()
+                    cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == p1, guild.categories)
+                    if cat:
+                        target = discord.utils.find(lambda c: c.name.lower() == p2, cat.channels)
+                    if not target:
+                        ch = discord.utils.find(lambda c: c.name.lower() == p1, guild.channels)
+                        if ch and hasattr(ch, 'threads'):
+                            target = discord.utils.find(lambda t: t.name.lower() == p2, ch.threads)
+                elif len(parts) >= 3:
+                    cat_name, ch_name, th_name = parts[0].lower(), parts[1].lower(), parts[2].lower()
+                    cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == cat_name, guild.categories)
+                    if cat:
+                        ch = discord.utils.find(lambda c: c.name.lower() == ch_name, cat.channels)
+                        if ch and hasattr(ch, 'threads'):
+                            target = discord.utils.find(lambda t: t.name.lower() == th_name, ch.threads)
+                
+                return target.mention if target else match.group(0)
+
+            tmpl = re.sub(r"\{(?:channel|thread):(.*?)\}", channel_replacer, tmpl)
+            desc_head = tmpl + "\n\n"
         
         embed = discord.Embed(title=f"案件: {title}", description=f"{desc_head}担当: {assignee.mention}", color=discord.Color.blue(), timestamp=datetime.datetime.now())
         embed.add_field(name="👤 依頼者", value=f"{creator.mention}\n(名義: **{creator_name}**)", inline=True)
@@ -1586,6 +1604,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
