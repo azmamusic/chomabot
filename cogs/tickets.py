@@ -174,12 +174,8 @@ class ContractModal(discord.ui.Modal, title="依頼内容 (1/2: 契約情報)"):
             return
         
         try:
-            res = await cog.create_ticket_entry(itx.guild, itx.user, self.assignee, self.t_name.value, self.t_title.value, self.t_type.value, self.t_deadline.value, self.t_budget.value)
-            if isinstance(res, str):
-                await itx.followup.send(res, ephemeral=True)
-            else:
-                ch, msg = res
-                await itx.followup.send(f"✅ チケットを作成しました: {msg.jump_url}", ephemeral=True)
+            ch, msg = await cog.create_ticket_entry(itx.guild, itx.user, self.assignee, self.t_name.value, self.t_title.value, self.t_type.value, self.t_deadline.value, self.t_budget.value)
+            await itx.followup.send(f"✅ チケットを作成しました: {msg.jump_url}", ephemeral=True)
         except Exception as e:
             await itx.followup.send(f"エラー: {e}", ephemeral=True)
 
@@ -843,6 +839,39 @@ class Tickets(commands.Cog):
         if current_user_tickets >= max_s:
             return f"⛔ あなたは既に {current_user_tickets}件 依頼中です。(上限: {max_s}件)"
         return None
+
+        # ▼ 個別カテゴリが未設定の場合は、モーダルを出さずに外部誘導用テンプレートを返す
+        if not p.get("category_id"):
+            tmpl = p.get("template")
+            if tmpl:
+                # 入力画面前なので title や creator_name は空文字として置換
+                formatted_tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{assignee}", assignee.mention).replace("{title}", "").replace("{creator_name}", "").replace("\\n", "\n")
+                
+                def channel_replacer(match):
+                    query = match.group(1)
+                    parts = [pt.strip() for pt in query.split(':')]
+                    target = None
+                    if len(parts) == 1:
+                        name = parts[0].lower()
+                        target = discord.utils.find(lambda c: c.name.lower() == name, guild.channels) or discord.utils.find(lambda t: t.name.lower() == name, guild.threads)
+                    elif len(parts) == 2:
+                        p1, p2 = parts[0].lower(), parts[1].lower()
+                        cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == p1, guild.categories)
+                        if cat: target = discord.utils.find(lambda c: c.name.lower() == p2, cat.channels)
+                        if not target:
+                            ch = discord.utils.find(lambda c: c.name.lower() == p1, guild.channels)
+                            if ch and hasattr(ch, 'threads'): target = discord.utils.find(lambda t: t.name.lower() == p2, ch.threads)
+                    elif len(parts) >= 3:
+                        cat_name, ch_name, th_name = parts[0].lower(), parts[1].lower(), parts[2].lower()
+                        cat = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == cat_name, guild.categories)
+                        if cat:
+                            ch = discord.utils.find(lambda c: c.name.lower() == ch_name, cat.channels)
+                            if ch and hasattr(ch, 'threads'): target = discord.utils.find(lambda t: t.name.lower() == th_name, ch.threads)
+                    return target.mention if target else match.group(0)
+
+                return re.sub(r"\{(?:channel|thread):(.*?)\}", channel_replacer, formatted_tmpl)
+            else:
+                return f"ℹ️ **{assignee.display_name}** は本サーバー内での依頼対応を行っておりません。個別にお問い合わせください。"
     
     def _update_settings_logic(self, data: dict, is_guild: bool, **kwargs):
         msg = []
@@ -908,10 +937,7 @@ class Tickets(commands.Cog):
         p = self.db.get_user_profile(guild.id, assignee.id)
         g_conf = self.db.get_guild_config(guild.id)
         
-        cat_id = p.get("category_id")
-        
-        # 外部誘導モードの場合は個別テンプレートのみを参照し、通常モードはデフォルト設定へフォールバック
-        tmpl = p.get("template") if not cat_id else (p.get("template") or g_conf.get("template"))
+        tmpl = p.get("template") or g_conf.get("template")
         formatted_tmpl = None
         if tmpl:
             formatted_tmpl = tmpl.replace("{creator}", creator.mention).replace("{user}", creator.mention).replace("{creator_name}", creator_name).replace("{assignee}", assignee.mention).replace("{title}", title).replace("\\n", "\n")
@@ -940,14 +966,6 @@ class Tickets(commands.Cog):
 
             formatted_tmpl = re.sub(r"\{(?:channel|thread):(.*?)\}", channel_replacer, formatted_tmpl)
 
-        # ▼ カテゴリ未設定時は「外部誘導モード」として文字列を返す
-        if not cat_id:
-            if formatted_tmpl:
-                return formatted_tmpl
-            else:
-                return f"ℹ️ **{assignee.display_name}** は本サーバー内での依頼対応を行っておりません。個別にお問い合わせください。"
-
-        # 以降は通常のチケット作成処理
         reuse = self._get_setting(guild.id, p, "reuse_channel", DEFAULT_REUSE_CHANNEL)
         target_channel = None
         gid = str(guild.id)
@@ -1611,13 +1629,6 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
-
-
-
-
-
-
-
 
 
 
