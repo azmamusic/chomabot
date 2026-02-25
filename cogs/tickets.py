@@ -453,6 +453,8 @@ class AssigneeCloseView(discord.ui.View):
 
     @discord.ui.button(label="完了にする", style=discord.ButtonStyle.primary)
     async def complete(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         gid, cid = str(itx.guild_id), str(self.target_channel.id)
         
@@ -464,21 +466,23 @@ class AssigneeCloseView(discord.ui.View):
             if uncompleted:
                 embed = discord.Embed(title="⚠️ 未完了のタスクがあります", description="以下のタスクが残っています。強制的に完了しますか？", color=discord.Color.orange())
                 embed.add_field(name="残タスク", value="\n".join([f"・{n}" for n in uncompleted]))
-                await itx.response.send_message(embed=embed, view=TaskForceCloseView(self.target_channel, self.ticket_msg_id), ephemeral=True)
+                await itx.followup.send(embed=embed, view=TaskForceCloseView(self.target_channel, self.ticket_msg_id), ephemeral=True)
                 return
 
         await cog.close_ticket(self.target_channel, itx.user, self.ticket_msg_id)
-        await itx.response.send_message("✅ 完了しました。", ephemeral=True)
+        await itx.followup.send("✅ 完了しました。", ephemeral=True)
 
     @discord.ui.button(label="チャンネル削除", style=discord.ButtonStyle.danger)
     async def delete_ch(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         await cog.log_to_forum(self.target_channel, content="🗑️ 手動削除されました。", close_thread=True)
         gid, cid = str(itx.guild_id), str(self.target_channel.id)
         if cid in cog.db.timers.get(gid, {}):
             del cog.db.timers[gid][cid]
             cog.db.save_timers()
-        await itx.response.send_message("削除します...", ephemeral=True)
+        await itx.followup.send("削除します...", ephemeral=True)
         await asyncio.sleep(2)
         try:
             await self.target_channel.delete()
@@ -493,9 +497,11 @@ class TaskForceCloseView(discord.ui.View):
 
     @discord.ui.button(label="⚠️ 強制クローズ", style=discord.ButtonStyle.danger)
     async def force_close(self, itx: discord.Interaction, button: discord.ui.Button):
+        await itx.response.defer(ephemeral=True)
+
         cog = itx.client.get_cog("Tickets")
         await cog.close_ticket(self.target_channel, itx.user, self.ticket_msg_id)
-        await itx.response.send_message("✅ 強制完了しました。", ephemeral=True)
+        await itx.followup.send("✅ 強制完了しました。", ephemeral=True)
 
     @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
     async def cancel(self, itx: discord.Interaction, button: discord.ui.Button):
@@ -1580,6 +1586,7 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
 
 
