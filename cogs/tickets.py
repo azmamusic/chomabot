@@ -152,9 +152,12 @@ class AssigneeSelectView(discord.ui.View):
             await itx.response.send_message(err, ephemeral=True)
             return
 
-        # 個別のカテゴリが設定されていない場合
+        # ユーザー固有（custom）のカテゴリが設定されているか確認
         p = cog.db.get_user_profile(itx.guild.id, target.id)
-        if not p.get("category_id"):
+        custom_category_id = p.get("category_id")
+        
+        if not custom_category_id:
+            # 固有のカテゴリがない場合は、チケット作成用モーダルを開かずにメッセージを返す
             tmpl = p.get("template")
             if tmpl:
                 msg_content = tmpl.replace("{creator}", itx.user.mention).replace("{user}", itx.user.mention).replace("{assignee}", target.mention).replace("\\n", "\n")
@@ -1615,4 +1618,5 @@ class Tickets(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tickets(bot))
+
 
